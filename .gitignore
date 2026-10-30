@@ -1,0 +1,23 @@
+node_modules
+dist
+.env
+.env.local
+.DS_Store
+
+# Environment secrets
+.env*
+!.env.example
+
+# Private credentials
+*.pem
+*service-account*.json
+firebase-adminsdk*.json
+
+# Environment secrets
+.env*
+!.env.example
+
+# Private credentials
+*.pem
+*service-account*.json
+firebase-adminsdk*.json

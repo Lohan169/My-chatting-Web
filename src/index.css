@@ -1,0 +1,53 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-primary: #5865F2;
+  --color-primary-variant: #4752C4;
+  --color-secondary: #8B5CF6;
+  --color-accent: #06B6D4;
+  --color-success: #22C55E;
+  --color-warning: #F59E0B;
+  --color-error: #EF4444;
+  --color-bg-dark: #0F172A;
+  --color-surface-dark: #1E293B;
+  --color-seen-blue: #34B7F1;
+}
+
+body {
+  margin: 0;
+  font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
+  background-color: var(--color-bg-dark);
+  color: #F8FAFC;
+}
+
+/* Android Main Gradient (135deg #5865F2 to #8B5CF6) */
+.bg-gradient-android {
+  background: linear-gradient(135deg, #5865F2 0%, #8B5CF6 100%);
+}
+
+/* Glass Card Style matching @style/GlassCard (28dp corner radius) */
+.glass-card-android {
+  background: rgba(30, 41, 59, 0.85);
+  backdrop-filter: blur(12px);
+  border-radius: 28px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.3);
+}
+
+/* Custom Scrollbar for Dark Theme */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0F172A;
+}
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}

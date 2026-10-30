@@ -1,0 +1,303 @@
+import React, { useState, useRef } from 'react';
+import { useChat } from '../../context/ChatContext';
+import ReplyPreview from './ReplyPreview';
+import VoiceRecorder from './VoiceRecorder';
+import { Loader2, Image as ImageIcon, Mic, X, ArrowRight, Plus } from 'lucide-react';
+
+export default function MessageInput() {
+  const { sendMessage, sendImage, sendVoice, activeReplyMessage, cancelReply } = useChat();
+  const [text, setText] = useState('');
+  const [selectedFiles, setSelectedFiles] = useState([]);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isSending, setIsSending] = useState(false);
+  const [error, setError] = useState('');
+
+  const fileInputRef = useRef(null);
+  const xhrRef = useRef(null);
+
+  const handleFileChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    let errorText = '';
+    const newItems = [];
+
+    files.forEach((file) => {
+      if (!file.type.startsWith('image/')) {
+        errorText = 'Some files were skipped: invalid image type.';
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        errorText = 'Some files were skipped: size exceeds 10MB limit.';
+        return;
+      }
+      const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      const previewUrl = URL.createObjectURL(file);
+      newItems.push({ id, file, previewUrl, progress: 0 });
+    });
+
+    if (errorText) setError(errorText);
+    else setError('');
+
+    if (newItems.length > 0) {
+      setSelectedFiles((prev) => [...prev, ...newItems]);
+    }
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const removeFile = (id) => {
+    setSelectedFiles((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return prev.filter((item) => item.id !== id);
+    });
+  };
+
+  const clearAllFiles = () => {
+    if (xhrRef.current) {
+      xhrRef.current.abort();
+      xhrRef.current = null;
+    }
+    selectedFiles.forEach((item) => {
+      if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+    });
+    setSelectedFiles([]);
+    setIsSending(false);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleSend = async (e) => {
+    e.preventDefault();
+    setError('');
+
+    if (selectedFiles.length > 0) {
+      setIsSending(true);
+      const itemsToSend = [...selectedFiles];
+      const remainingItems = [];
+      let lastErr = '';
+
+      for (const item of itemsToSend) {
+        try {
+          await sendImage(
+            item.file,
+            (progress) => {
+              setSelectedFiles((prev) =>
+                prev.map((i) => (i.id === item.id ? { ...i, progress } : i))
+              );
+            },
+            (xhr) => { xhrRef.current = xhr; }
+          );
+          if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+        } catch (err) {
+          console.error('Failed to send image item:', err);
+          if (err.message !== 'Upload cancelled by user') {
+            lastErr = err.message || 'Failed to send image';
+            remainingItems.push({ ...item, progress: 0 });
+          }
+        }
+      }
+
+      setSelectedFiles(remainingItems);
+      setIsSending(false);
+      if (lastErr) setError(lastErr);
+      return;
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed || isSending) return;
+
+    try {
+      setIsSending(true);
+      await sendMessage(trimmed);
+      setText('');
+    } catch (err) {
+      console.error('Failed to send text message:', err);
+      setError(err.message || 'Failed to send message');
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  const handleSendVoice = async (audioBlob, duration, onProgress, onXhrCreated) => {
+    try {
+      setError('');
+      await sendVoice(audioBlob, duration, onProgress, onXhrCreated);
+      setIsRecordingVoice(false);
+    } catch (err) {
+      console.error('Failed to send voice message:', err);
+      if (err.message !== 'Upload cancelled by user') {
+        setError(err.message || 'Failed to send voice message');
+      }
+    }
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend(e);
+    }
+  };
+
+  return (
+    <div className="shrink-0 bg-[#F8FAFC] border-t border-[#E2E8F0]">
+      {/* Quoted Reply Preview */}
+      <ReplyPreview replyMessage={activeReplyMessage} onCancel={cancelReply} />
+
+      {/* Voice Recorder Overlay Mode */}
+      {isRecordingVoice ? (
+        <VoiceRecorder
+          onSendVoice={handleSendVoice}
+          onCancel={() => setIsRecordingVoice(false)}
+        />
+      ) : (
+        <>
+          {/* Multi-Photo Preview Gallery */}
+          {selectedFiles.length > 0 && (
+            <div className="p-3 bg-white border-t border-[#E2E8F0]">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-[#5B5CF0]" />
+                  <span>Selected Photos ({selectedFiles.length})</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={clearAllFiles}
+                  className="text-[11px] font-semibold text-[#EF4444] hover:underline"
+                >
+                  Clear All
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+                {selectedFiles.map((item) => (
+                  <div
+                    key={item.id}
+                    className="relative group shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-xl overflow-hidden border border-[#E2E8F0] bg-black/5"
+                  >
+                    <img
+                      src={item.previewUrl}
+                      alt="Preview"
+                      className="w-full h-full object-cover"
+                    />
+                    {isSending && item.progress > 0 && item.progress < 100 && (
+                      <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
+                        <span className="text-[10px] text-white font-bold">{item.progress}%</span>
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => removeFile(item.id)}
+                      disabled={isSending}
+                      className="absolute top-1 right-1 p-1 rounded-full bg-black/60 text-white hover:bg-[#EF4444] transition"
+                      title="Remove Photo"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Add More Photos Card */}
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={isSending}
+                  className="shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-xl border-2 border-dashed border-[#CBD5E1] hover:border-[#5B5CF0] bg-[#F1F5F9] hover:bg-white flex flex-col items-center justify-center text-[#64748B] hover:text-[#5B5CF0] transition"
+                  title="Add More Photos"
+                >
+                  <Plus className="w-5 h-5" />
+                  <span className="text-[10px] font-semibold mt-0.5">Add More</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {error && (
+            <div className="px-4 py-1.5 bg-[#EF4444]/10 text-[#EF4444] text-[11px] border-b border-[#EF4444]/20 flex items-center justify-between">
+              <span>Error: {error}</span>
+              <button onClick={() => setError('')} className="underline font-medium ml-2">Dismiss</button>
+            </div>
+          )}
+
+          {/* Input Form */}
+          <form onSubmit={handleSend} className="p-2.5 sm:p-3 bg-[#F8FAFC] flex flex-col gap-2">
+            {/* Top Row: Separate row immediately ABOVE input box, aligned to RIGHT edge */}
+            <div className="flex justify-end px-1">
+              <button
+                type="submit"
+                disabled={(!text.trim() && selectedFiles.length === 0) || isSending}
+                className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#5B5CF0] hover:bg-[#4A4BCF] active:scale-95 hover:scale-105 hover:shadow-lg hover:shadow-[#5B5CF0]/30 text-white disabled:opacity-40 disabled:hover:scale-100 disabled:hover:shadow-none disabled:active:scale-100 transition-all duration-200 ease-out shadow-md shadow-[#5B5CF0]/25 flex items-center justify-center shrink-0"
+                title="Send Message"
+              >
+                {isSending ? (
+                  <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin text-white" />
+                ) : (
+                  <ArrowRight className="w-5 h-5 sm:w-6 sm:h-6 text-white" />
+                )}
+              </button>
+            </div>
+
+            {/* Bottom Row: Input Area containing Photo, White Pill Input, Mic */}
+            <div className="flex items-center gap-2 sm:gap-2.5">
+              {/* Hidden Image File Input */}
+              <input
+                type="file"
+                ref={fileInputRef}
+                accept="image/*"
+                multiple
+                onChange={handleFileChange}
+                className="hidden"
+              />
+
+              {/* Photo Button */}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSending}
+                className="p-2.5 sm:p-3 rounded-full text-[#64748B] hover:text-[#5B5CF0] hover:bg-white transition disabled:opacity-40 shrink-0"
+                title="Attach Photo"
+              >
+                <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+
+              {/* White Rounded Pill-Shaped Message Input */}
+              <div className="flex-1 relative min-w-0">
+                <input
+                  type="text"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={
+                    selectedFiles.length > 0
+                      ? `Selected ${selectedFiles.length} photo(s). Click Send arrow above...`
+                      : "Type a message..."
+                  }
+                  disabled={isSending || selectedFiles.length > 0}
+                  className="w-full bg-white border border-[#E2E8F0] rounded-full py-2.5 px-4 text-[15px] text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:border-[#5B5CF0] focus:ring-2 focus:ring-[#5B5CF0]/20 transition shadow-xs disabled:opacity-50"
+                />
+              </div>
+
+              {/* Mic Button */}
+              <button
+                type="button"
+                onClick={() => setIsRecordingVoice(true)}
+                disabled={isSending || selectedFiles.length > 0}
+                className="p-2.5 sm:p-3 rounded-full bg-[#4752C4] hover:bg-[#3B44A1] text-white transition disabled:opacity-40 shadow-md shrink-0"
+                title="Record Voice Message"
+              >
+                <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+            </div>
+          </form>
+        </>
+      )}
+    </div>
+  );
+}
