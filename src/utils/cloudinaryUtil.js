@@ -137,3 +137,74 @@ export const uploadVoiceToCloudinary = (audioBlob, chatId, onProgress, onXhrCrea
     xhr.send(formData);
   });
 };
+
+export const uploadDocumentToCloudinary = (file, chatId, onProgress, onXhrCreated) => {
+  return new Promise((resolve, reject) => {
+    if (!file) {
+      reject(new Error('No file provided for upload'));
+      return;
+    }
+
+    // 25MB file size limit
+    const MAX_SIZE = 25 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      reject(new Error('Document size exceeds 25MB limit. Please choose a smaller file.'));
+      return;
+    }
+
+    const cloudName = 'bgrvouaj';
+    const uploadPreset = 'Chatting_upload';
+    const folder = `chat_documents/${chatId}`;
+
+    const url = `https://api.cloudinary.com/v1_1/${cloudName}/raw/upload`;
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('upload_preset', uploadPreset);
+    formData.append('folder', folder);
+
+    const xhr = new XMLHttpRequest();
+    if (onXhrCreated) {
+      onXhrCreated(xhr);
+    }
+
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        const percent = Math.round((e.loaded / e.total) * 100);
+        onProgress(percent);
+      }
+    };
+
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try {
+          const response = JSON.parse(xhr.responseText);
+          if (response.secure_url) {
+            resolve(response.secure_url);
+          } else {
+            reject(new Error('Cloudinary response missing secure_url'));
+          }
+        } catch (e) {
+          reject(new Error('Invalid JSON response from Cloudinary'));
+        }
+      } else {
+        try {
+          const errRes = JSON.parse(xhr.responseText);
+          reject(new Error(errRes.error?.message || `Upload failed with status ${xhr.status}`));
+        } catch (e) {
+          reject(new Error(`Upload failed with status ${xhr.status}`));
+        }
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error('Network error during document upload'));
+    };
+
+    xhr.onabort = () => {
+      reject(new Error('Upload cancelled by user'));
+    };
+
+    xhr.open('POST', url, true);
+    xhr.send(formData);
+  });
+};

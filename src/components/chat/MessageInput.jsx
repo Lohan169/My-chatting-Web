@@ -2,17 +2,30 @@ import React, { useState, useRef } from 'react';
 import { useChat } from '../../context/ChatContext';
 import ReplyPreview from './ReplyPreview';
 import VoiceRecorder from './VoiceRecorder';
-import { Loader2, Image as ImageIcon, Mic, X, ArrowRight, Plus } from 'lucide-react';
+import {
+  Loader2,
+  Image as ImageIcon,
+  Mic,
+  X,
+  ArrowRight,
+  Plus,
+  Paperclip,
+  FileText
+} from 'lucide-react';
+
+const BLOCKED_EXTENSIONS = ['exe', 'bat', 'cmd', 'sh', 'ps1', 'msi', 'jar', 'vbs', 'scr', 'pif', 'cpl', 'gadget', 'app', 'dmg'];
 
 export default function MessageInput() {
-  const { sendMessage, sendImage, sendVoice, activeReplyMessage, cancelReply } = useChat();
+  const { sendMessage, sendImage, sendVoice, sendDocument, activeReplyMessage, cancelReply } = useChat();
   const [text, setText] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
+  const [selectedDocs, setSelectedDocs] = useState([]);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
 
   const fileInputRef = useRef(null);
+  const docInputRef = useRef(null);
   const xhrRef = useRef(null);
 
   const handleFileChange = (e) => {
@@ -28,7 +41,7 @@ export default function MessageInput() {
         return;
       }
       if (file.size > 10 * 1024 * 1024) {
-        errorText = 'Some files were skipped: size exceeds 10MB limit.';
+        errorText = 'Some files were skipped: image size exceeds 10MB limit.';
         return;
       }
       const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
@@ -48,6 +61,42 @@ export default function MessageInput() {
     }
   };
 
+  const handleDocFileChange = (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+
+    let errorText = '';
+    const newItems = [];
+
+    files.forEach((file) => {
+      const ext = (file.name || '').split('.').pop().toLowerCase();
+
+      if (BLOCKED_EXTENSIONS.includes(ext)) {
+        errorText = `Executable file "${file.name}" is blocked for security reasons.`;
+        return;
+      }
+
+      if (file.size > 25 * 1024 * 1024) {
+        errorText = `Document "${file.name}" exceeds 25MB limit.`;
+        return;
+      }
+
+      const id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+      newItems.push({ id, file, name: file.name, size: file.size, ext, progress: 0 });
+    });
+
+    if (errorText) setError(errorText);
+    else setError('');
+
+    if (newItems.length > 0) {
+      setSelectedDocs((prev) => [...prev, ...newItems]);
+    }
+
+    if (docInputRef.current) {
+      docInputRef.current.value = '';
+    }
+  };
+
   const removeFile = (id) => {
     setSelectedFiles((prev) => {
       const target = prev.find((item) => item.id === id);
@@ -56,6 +105,10 @@ export default function MessageInput() {
       }
       return prev.filter((item) => item.id !== id);
     });
+  };
+
+  const removeDoc = (id) => {
+    setSelectedDocs((prev) => prev.filter((item) => item.id !== id));
   };
 
   const clearAllFiles = () => {
@@ -67,16 +120,17 @@ export default function MessageInput() {
       if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
     });
     setSelectedFiles([]);
+    setSelectedDocs([]);
     setIsSending(false);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (docInputRef.current) docInputRef.current.value = '';
   };
 
   const handleSend = async (e) => {
     e.preventDefault();
     setError('');
 
+    // Send Photo Attachments
     if (selectedFiles.length > 0) {
       setIsSending(true);
       const itemsToSend = [...selectedFiles];
@@ -105,6 +159,42 @@ export default function MessageInput() {
       }
 
       setSelectedFiles(remainingItems);
+      setIsSending(false);
+      if (lastErr) setError(lastErr);
+      return;
+    }
+
+    // Send Document Attachments
+    if (selectedDocs.length > 0) {
+      setIsSending(true);
+      const docsToSend = [...selectedDocs];
+      const remainingDocs = [];
+      let lastErr = '';
+
+      for (const docItem of docsToSend) {
+        try {
+          await sendDocument(
+            docItem.file,
+            docItem.name,
+            docItem.size,
+            docItem.ext,
+            (progress) => {
+              setSelectedDocs((prev) =>
+                prev.map((d) => (d.id === docItem.id ? { ...d, progress } : d))
+              );
+            },
+            (xhr) => { xhrRef.current = xhr; }
+          );
+        } catch (err) {
+          console.error('Failed to send document:', err);
+          if (err.message !== 'Upload cancelled by user') {
+            lastErr = err.message || 'Failed to send document';
+            remainingDocs.push({ ...docItem, progress: 0 });
+          }
+        }
+      }
+
+      setSelectedDocs(remainingDocs);
       setIsSending(false);
       if (lastErr) setError(lastErr);
       return;
@@ -218,6 +308,77 @@ export default function MessageInput() {
             </div>
           )}
 
+          {/* Document Preview Gallery */}
+          {selectedDocs.length > 0 && (
+            <div className="p-3 bg-white border-t border-[#E2E8F0]">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-bold text-[#0F172A] flex items-center gap-1.5">
+                  <Paperclip className="w-4 h-4 text-[#5B5CF0]" />
+                  <span>Selected Documents ({selectedDocs.length})</span>
+                </span>
+                <button
+                  type="button"
+                  onClick={clearAllFiles}
+                  className="text-[11px] font-semibold text-[#EF4444] hover:underline"
+                >
+                  Clear All
+                </button>
+              </div>
+
+              <div className="flex items-center gap-2.5 overflow-x-auto pb-1">
+                {selectedDocs.map((docItem) => (
+                  <div
+                    key={docItem.id}
+                    className="relative shrink-0 p-2.5 rounded-xl border border-[#E2E8F0] bg-[#F8FAFC] flex items-center gap-2.5 min-w-[200px] max-w-[260px]"
+                  >
+                    <div className="w-9 h-9 rounded-lg bg-[#5865F2]/10 text-[#5865F2] font-bold text-xs uppercase flex items-center justify-center shrink-0">
+                      {docItem.ext}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-[#0F172A] truncate" title={docItem.name}>
+                        {docItem.name}
+                      </p>
+                      <p className="text-[10px] text-[#64748B]">
+                        {(docItem.size / (1024 * 1024)).toFixed(2)} MB
+                      </p>
+                      {isSending && docItem.progress > 0 && docItem.progress < 100 && (
+                        <div className="w-full bg-[#E2E8F0] rounded-full h-1 mt-1 overflow-hidden">
+                          <div
+                            className="bg-[#5B5CF0] h-full transition-all duration-150"
+                            style={{ width: `${docItem.progress}%` }}
+                          ></div>
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => removeDoc(docItem.id)}
+                      disabled={isSending}
+                      className="p-1 rounded-lg text-[#64748B] hover:text-[#EF4444] hover:bg-[#E2E8F0] transition shrink-0"
+                      title="Remove Document"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
+                ))}
+
+                {/* Add More Documents Button */}
+                <button
+                  type="button"
+                  onClick={() => docInputRef.current?.click()}
+                  disabled={isSending}
+                  className="shrink-0 p-2.5 rounded-xl border-2 border-dashed border-[#CBD5E1] hover:border-[#5B5CF0] bg-[#F1F5F9] hover:bg-white flex items-center gap-1.5 text-xs text-[#64748B] hover:text-[#5B5CF0] font-semibold transition"
+                  title="Add More Documents"
+                >
+                  <Plus className="w-4 h-4" />
+                  <span>Add More</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Error Banner */}
           {error && (
             <div className="px-4 py-1.5 bg-[#EF4444]/10 text-[#EF4444] text-[11px] border-b border-[#EF4444]/20 flex items-center justify-between">
@@ -232,7 +393,7 @@ export default function MessageInput() {
             <div className="flex justify-end px-1">
               <button
                 type="submit"
-                disabled={(!text.trim() && selectedFiles.length === 0) || isSending}
+                disabled={(!text.trim() && selectedFiles.length === 0 && selectedDocs.length === 0) || isSending}
                 className="w-11 h-11 sm:w-12 sm:h-12 rounded-full bg-[#5B5CF0] hover:bg-[#4A4BCF] active:scale-95 hover:scale-105 hover:shadow-lg hover:shadow-[#5B5CF0]/30 text-white disabled:opacity-40 disabled:hover:scale-100 disabled:hover:shadow-none disabled:active:scale-100 transition-all duration-200 ease-out shadow-md shadow-[#5B5CF0]/25 flex items-center justify-center shrink-0"
                 title="Send Message"
               >
@@ -244,7 +405,7 @@ export default function MessageInput() {
               </button>
             </div>
 
-            {/* Bottom Row: Input Area containing Photo, White Pill Input, Mic */}
+            {/* Bottom Row: Input Area containing Photo, Document, White Pill Input, Mic */}
             <div className="flex items-center gap-2 sm:gap-2.5">
               {/* Hidden Image File Input */}
               <input
@@ -253,6 +414,16 @@ export default function MessageInput() {
                 accept="image/*"
                 multiple
                 onChange={handleFileChange}
+                className="hidden"
+              />
+
+              {/* Hidden Document File Input */}
+              <input
+                type="file"
+                ref={docInputRef}
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.zip,.rar,.7z,.json,.xml,.pages,.numbers,.key,.rtf,.odt,.ods,.odp"
+                multiple
+                onChange={handleDocFileChange}
                 className="hidden"
               />
 
@@ -267,6 +438,17 @@ export default function MessageInput() {
                 <ImageIcon className="w-5 h-5 sm:w-6 sm:h-6" />
               </button>
 
+              {/* Document/Paperclip Button */}
+              <button
+                type="button"
+                onClick={() => docInputRef.current?.click()}
+                disabled={isSending}
+                className="p-2.5 sm:p-3 rounded-full text-[#64748B] hover:text-[#5B5CF0] hover:bg-white transition disabled:opacity-40 shrink-0"
+                title="Attach Document or File"
+              >
+                <Paperclip className="w-5 h-5 sm:w-6 sm:h-6" />
+              </button>
+
               {/* White Rounded Pill-Shaped Message Input */}
               <div className="flex-1 relative min-w-0">
                 <input
@@ -277,9 +459,11 @@ export default function MessageInput() {
                   placeholder={
                     selectedFiles.length > 0
                       ? `Selected ${selectedFiles.length} photo(s). Click Send arrow above...`
+                      : selectedDocs.length > 0
+                      ? `Selected ${selectedDocs.length} document(s). Click Send arrow above...`
                       : "Type a message..."
                   }
-                  disabled={isSending || selectedFiles.length > 0}
+                  disabled={isSending || selectedFiles.length > 0 || selectedDocs.length > 0}
                   className="w-full bg-white border border-[#E2E8F0] rounded-full py-2.5 px-4 text-[15px] text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:border-[#5B5CF0] focus:ring-2 focus:ring-[#5B5CF0]/20 transition shadow-xs disabled:opacity-50"
                 />
               </div>
@@ -288,7 +472,7 @@ export default function MessageInput() {
               <button
                 type="button"
                 onClick={() => setIsRecordingVoice(true)}
-                disabled={isSending || selectedFiles.length > 0}
+                disabled={isSending || selectedFiles.length > 0 || selectedDocs.length > 0}
                 className="p-2.5 sm:p-3 rounded-full bg-[#4752C4] hover:bg-[#3B44A1] text-white transition disabled:opacity-40 shadow-md shrink-0"
                 title="Record Voice Message"
               >

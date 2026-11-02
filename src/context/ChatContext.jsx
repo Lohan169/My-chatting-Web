@@ -8,6 +8,7 @@ import {
   sendTextMessage,
   sendImageMessage,
   sendVoiceMessage,
+  sendDocumentMessage,
   addReaction,
   deleteMessageForMe,
   deleteMessageForEveryone,
@@ -15,7 +16,11 @@ import {
   subscribeToAiSettings,
   updateAiSettings
 } from '../firebase/chatService';
-import { uploadImageToCloudinary, uploadVoiceToCloudinary } from '../utils/cloudinaryUtil';
+import {
+  uploadImageToCloudinary,
+  uploadVoiceToCloudinary,
+  uploadDocumentToCloudinary
+} from '../utils/cloudinaryUtil';
 
 const ChatContext = createContext();
 
@@ -234,6 +239,32 @@ export const ChatProvider = ({ children }) => {
     return result;
   };
 
+  const sendDocument = async (file, fileName, fileSize, fileType, onProgress, onXhrCreated) => {
+    if (!currentUser || !activeContact || !activeChatId) {
+      throw new Error('Active contact or session missing');
+    }
+
+    const fileUrl = await uploadDocumentToCloudinary(file, activeChatId, onProgress, onXhrCreated);
+    const idToken = await currentUser.getIdToken(false);
+
+    const ext = (fileName || file.name || '').split('.').pop().toLowerCase();
+
+    const result = await sendDocumentMessage(
+      activeChatId,
+      currentUser.uid,
+      activeContact.uid,
+      fileUrl,
+      fileName || file.name,
+      fileSize || file.size,
+      ext || fileType || 'document',
+      activeReplyMessage,
+      idToken
+    );
+
+    setActiveReplyMessage(null);
+    return result;
+  };
+
   const reactToMessage = async (messageId, emoji) => {
     if (!activeChatId || !currentUser || !messageId || !emoji) return;
     await addReaction(activeChatId, messageId, currentUser.uid, emoji);
@@ -276,6 +307,7 @@ export const ChatProvider = ({ children }) => {
     sendMessage,
     sendImage,
     sendVoice,
+    sendDocument,
     reactToMessage,
     deleteForMe,
     deleteForEveryone,

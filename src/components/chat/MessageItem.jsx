@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import { formatTime } from '../../utils/timeUtil';
+import { renderMessageText } from '../../utils/textUtil';
 import ForwardModal from './ForwardModal';
 import {
   Check,
@@ -18,10 +19,26 @@ import {
   Trash2,
   MoreVertical,
   Download,
-  Smile
+  Smile,
+  FileText,
+  FileSpreadsheet,
+  FileArchive,
+  FileCode,
+  File,
+  Eye
 } from 'lucide-react';
 
 const EMOJI_OPTIONS = ['👍', '❤️', '😂', '😮', '😢', '😡'];
+
+function getFileIcon(ext) {
+  const cleanExt = (ext || '').toLowerCase().replace('.', '');
+  if (['pdf'].includes(cleanExt)) return { icon: FileText, color: 'text-[#EF4444] bg-[#EF4444]/10 border-[#EF4444]/30', label: 'PDF' };
+  if (['doc', 'docx', 'rtf', 'pages', 'odt'].includes(cleanExt)) return { icon: FileText, color: 'text-[#3B82F6] bg-[#3B82F6]/10 border-[#3B82F6]/30', label: cleanExt.toUpperCase() };
+  if (['xls', 'xlsx', 'csv', 'ods', 'numbers'].includes(cleanExt)) return { icon: FileSpreadsheet, color: 'text-[#22C55E] bg-[#22C55E]/10 border-[#22C55E]/30', label: cleanExt.toUpperCase() };
+  if (['zip', 'rar', '7z', 'tar', 'gz'].includes(cleanExt)) return { icon: FileArchive, color: 'text-[#8B5CF6] bg-[#8B5CF6]/10 border-[#8B5CF6]/30', label: cleanExt.toUpperCase() };
+  if (['txt', 'json', 'xml', 'md', 'html', 'css', 'js'].includes(cleanExt)) return { icon: FileCode, color: 'text-[#64748B] bg-[#64748B]/10 border-[#64748B]/30', label: cleanExt.toUpperCase() };
+  return { icon: File, color: 'text-[#5865F2] bg-[#5865F2]/10 border-[#5865F2]/30', label: cleanExt.toUpperCase() || 'FILE' };
+}
 
 function VoicePlayer({ audioUrl, duration, isSentByMe }) {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -106,6 +123,7 @@ export default function MessageItem({ message }) {
   } = useChat();
 
   const [isLightboxOpen, setIsLightboxOpen] = useState(false);
+  const [isPdfPreviewOpen, setIsPdfPreviewOpen] = useState(false);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
   const [showReactionsPicker, setShowReactionsPicker] = useState(false);
@@ -139,6 +157,25 @@ export default function MessageItem({ message }) {
       URL.revokeObjectURL(objectUrl);
     } catch (err) {
       console.warn('Direct image download fallback triggered:', err);
+      window.open(url, '_blank');
+    }
+  };
+
+  const handleDownloadFile = async (url, fileName) => {
+    try {
+      const res = await fetch(url, { mode: 'cors' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = objectUrl;
+      a.download = fileName || 'document';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(objectUrl);
+    } catch (err) {
+      console.warn('Direct file download fallback triggered:', err);
       window.open(url, '_blank');
     }
   };
@@ -315,11 +352,62 @@ export default function MessageItem({ message }) {
               />
             )}
 
+            {/* Document Attachment Card strictly when message.type === 'document' */}
+            {message.type === 'document' && message.fileUrl && (
+              <div className={`my-1.5 p-3 rounded-xl border flex flex-col gap-2.5 w-full min-w-[220px] max-w-sm ${
+                isSentByMe ? 'bg-[#0F172A]/20 border-white/15' : 'bg-[#E2E8F0] border-[#CBD5E1]'
+              }`}>
+                <div className="flex items-center gap-3">
+                  <div className={`w-10 h-10 rounded-xl border font-bold text-xs flex flex-col items-center justify-center shrink-0 shadow-xs ${
+                    getFileIcon(message.fileType || message.fileName).color
+                  }`}>
+                    <span>{getFileIcon(message.fileType || message.fileName).label}</span>
+                  </div>
+
+                  <div className="min-w-0 flex-1">
+                    <p className={`text-xs font-bold truncate leading-tight ${isSentByMe ? 'text-white' : 'text-[#0F172A]'}`} title={message.fileName || message.text}>
+                      {message.fileName || message.text || 'Document'}
+                    </p>
+                    <p className={`text-[10px] mt-0.5 ${isSentByMe ? 'text-white/80' : 'text-[#64748B]'}`}>
+                      {message.fileSize ? `${(message.fileSize / (1024 * 1024)).toFixed(2)} MB` : 'Document Attachment'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* Actions Bar */}
+                <div className="flex items-center gap-2 pt-1 border-t border-black/10">
+                  <button
+                    type="button"
+                    onClick={() => handleDownloadFile(message.fileUrl, message.fileName || message.text)}
+                    className="flex-1 py-1.5 px-3 rounded-lg bg-[#5865F2] hover:bg-[#4752C4] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-xs transition"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download</span>
+                  </button>
+
+                  {((message.fileType || '').toLowerCase().includes('pdf') || (message.fileName || '').toLowerCase().endsWith('.pdf')) && (
+                    <button
+                      type="button"
+                      onClick={() => setIsPdfPreviewOpen(true)}
+                      className={`py-1.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-1.5 transition ${
+                        isSentByMe
+                          ? 'bg-white/10 hover:bg-white/20 border-white/20 text-white'
+                          : 'bg-white hover:bg-[#F1F5F9] border-[#CBD5E1] text-[#0F172A]'
+                      }`}
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Preview</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
             {/* Message Text Body */}
-            {message.text && message.text !== 'Photo' && message.text !== 'Forwarded Photo' && (
+            {message.text && message.type !== 'image' && message.type !== 'voice' && message.type !== 'document' && message.text !== 'Photo' && message.text !== 'Forwarded Photo' && (
               <p className={`text-[15px] leading-relaxed whitespace-pre-wrap break-words ${
                 isSentByMe ? 'text-white' : 'text-[#0F172A]'
-              }`}>{message.text}</p>
+              }`}>{renderMessageText(message.text, isSentByMe)}</p>
             )}
 
             {/* Message Footer: Timestamp, Edited badge, and Ticks */}
@@ -422,6 +510,52 @@ export default function MessageItem({ message }) {
           messageToForward={message}
           onClose={() => setIsForwardModalOpen(false)}
         />
+      )}
+
+      {/* PDF Preview Modal Overlay */}
+      {isPdfPreviewOpen && (
+        <div
+          onClick={() => setIsPdfPreviewOpen(false)}
+          className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-2 sm:p-4 backdrop-blur-sm"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-[#1E293B] border border-[#334155] rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden shadow-2xl relative"
+          >
+            <div className="p-3 bg-[#0F172A] border-b border-[#334155] flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="px-2 py-0.5 rounded-md bg-[#EF4444]/20 border border-[#EF4444]/40 text-[#EF4444] text-[10px] font-bold">
+                  PDF
+                </span>
+                <p className="text-xs font-bold text-white truncate max-w-md">
+                  {message.fileName || message.text}
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => handleDownloadFile(message.fileUrl, message.fileName || message.text)}
+                  className="px-3 py-1.5 rounded-xl bg-[#5865F2] hover:bg-[#4752C4] text-white text-xs font-semibold flex items-center gap-1.5 transition"
+                >
+                  <Download className="w-4 h-4" />
+                  <span>Download</span>
+                </button>
+                <button
+                  onClick={() => setIsPdfPreviewOpen(false)}
+                  className="p-1.5 rounded-xl text-[#94A3B8] hover:text-white hover:bg-white/10 transition"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            <iframe
+              src={message.fileUrl}
+              title="PDF Preview"
+              className="w-full flex-1 bg-white border-0"
+            />
+          </div>
+        </div>
       )}
 
       {/* Full Screen Image Lightbox Modal */}

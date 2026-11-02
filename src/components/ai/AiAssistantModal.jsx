@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { uploadImageToCloudinary } from '../../utils/cloudinaryUtil';
 import { formatTime } from '../../utils/timeUtil';
+import { renderMessageText } from '../../utils/textUtil';
 import {
   X,
   Bot,
@@ -288,7 +289,7 @@ export default function AiAssistantModal({ onClose }) {
                   </div>
                 ) : (
                   <p className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">
-                    {msg.text}
+                    {renderMessageText(msg.text, msg.isUser, msg.isUser ? 'default' : 'dark')}
                   </p>
                 )}
 

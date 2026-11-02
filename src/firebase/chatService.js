@@ -181,7 +181,6 @@ export const sendTextMessage = async (chatId, currentUserId, recipientId, text, 
 
   batch.set(chatRef, chatData, { merge: true });
 
-  // Update sender's AI settings to cancel pending AI responses
   const aiSettingsRef = doc(db, 'chats', chatId, 'aiSettings', currentUserId);
   batch.set(
     aiSettingsRef,
@@ -346,6 +345,94 @@ export const sendVoiceMessage = async (chatId, currentUserId, recipientId, audio
   return messageData;
 };
 
+export const sendDocumentMessage = async (
+  chatId,
+  currentUserId,
+  recipientId,
+  fileUrl,
+  fileName,
+  fileSize,
+  fileType,
+  replyMessage = null,
+  idToken = null
+) => {
+  if (!fileUrl || !fileName) {
+    throw new Error('File URL and filename are required to send a document');
+  }
+
+  if (!chatId || !currentUserId || !recipientId) {
+    throw new Error('Missing required message parameters');
+  }
+
+  const batch = writeBatch(db);
+
+  const messageRef = doc(collection(db, 'chats', chatId, 'messages'));
+  const messageId = messageRef.id;
+  const timestamp = Date.now();
+
+  const messageData = {
+    messageId,
+    senderId: currentUserId,
+    receiverId: recipientId,
+    text: fileName,
+    fileUrl,
+    fileName,
+    fileSize: fileSize || 0,
+    fileType: fileType || 'document',
+    imageUrl: '',
+    audioUrl: '',
+    duration: 0,
+    type: 'document',
+    timestamp,
+    status: 0,
+    edited: false,
+    deleted: false,
+    reactions: {},
+    isForwarded: false,
+    isAi: false
+  };
+
+  if (replyMessage) {
+    messageData.replyMessageId = replyMessage.messageId || '';
+    messageData.replySenderName = replyMessage.senderId === currentUserId ? 'You' : (replyMessage.senderName || 'Sender');
+    messageData.replyMessage = replyMessage.fileName ? `📄 ${replyMessage.fileName}` : (replyMessage.text || 'Document');
+    messageData.replyType = replyMessage.type || 'text';
+  }
+
+  batch.set(messageRef, messageData);
+
+  const user1Id = currentUserId < recipientId ? currentUserId : recipientId;
+  const user2Id = currentUserId < recipientId ? recipientId : currentUserId;
+
+  const chatRef = doc(db, 'chats', chatId);
+  const chatData = {
+    chatId,
+    user1Id,
+    user2Id,
+    lastMessage: `📄 ${fileName}`,
+    lastMessageTimestamp: timestamp,
+    lastSenderId: currentUserId,
+    lastMessageSenderId: currentUserId
+  };
+
+  batch.set(chatRef, chatData, { merge: true });
+
+  const aiSettingsRef = doc(db, 'chats', chatId, 'aiSettings', currentUserId);
+  batch.set(
+    aiSettingsRef,
+    { lastUserActivity: timestamp, state: 'PAUSED', lastIncomingMessageId: messageId },
+    { merge: true }
+  );
+
+  await batch.commit();
+
+  if (idToken) {
+    notifyAiWorker(chatId, messageId, recipientId, idToken);
+  }
+
+  return messageData;
+};
+
 export const addReaction = async (chatId, messageId, userId, emoji) => {
   if (!chatId || !messageId || !userId || !emoji) {
     throw new Error('Missing reaction parameters');
@@ -379,6 +466,8 @@ export const deleteMessageForEveryone = async (chatId, messageId, currentUserId,
     textPlaceholder = '🖼️ This image was deleted.';
   } else if (message.type === 'voice') {
     textPlaceholder = '🎤 This voice message was deleted.';
+  } else if (message.type === 'document') {
+    textPlaceholder = '📄 This document was deleted.';
   }
 
   const messageRef = doc(db, 'chats', chatId, 'messages', messageId);
@@ -386,7 +475,8 @@ export const deleteMessageForEveryone = async (chatId, messageId, currentUserId,
     deleted: true,
     text: textPlaceholder,
     imageUrl: '',
-    audioUrl: ''
+    audioUrl: '',
+    fileUrl: ''
   });
 };
 
@@ -407,6 +497,8 @@ export const forwardMessage = async (sourceMessage, targetContacts, currentUserI
     let textPayload = sourceMessage.text || '';
     if (sourceMessage.type === 'image') {
       textPayload = 'Forwarded Photo';
+    } else if (sourceMessage.type === 'document') {
+      textPayload = sourceMessage.fileName || 'Forwarded Document';
     }
 
     const newMessage = {
@@ -424,13 +516,18 @@ export const forwardMessage = async (sourceMessage, targetContacts, currentUserI
       text: textPayload,
       imageUrl: sourceMessage.imageUrl || '',
       audioUrl: sourceMessage.audioUrl || '',
-      duration: sourceMessage.duration || 0
+      duration: sourceMessage.duration || 0,
+      fileUrl: sourceMessage.fileUrl || '',
+      fileName: sourceMessage.fileName || '',
+      fileSize: sourceMessage.fileSize || 0,
+      fileType: sourceMessage.fileType || ''
     };
 
     let lastMsgSummary = 'Forwarded message';
     if (sourceMessage.type === 'text') lastMsgSummary = sourceMessage.text;
     else if (sourceMessage.type === 'image') lastMsgSummary = '📷 Photo';
     else if (sourceMessage.type === 'voice') lastMsgSummary = '🎤 Voice message';
+    else if (sourceMessage.type === 'document') lastMsgSummary = `📄 ${sourceMessage.fileName || 'Document'}`;
 
     const user1Id = currentUserId < targetUserId ? currentUserId : targetUserId;
     const user2Id = currentUserId < targetUserId ? targetUserId : currentUserId;
