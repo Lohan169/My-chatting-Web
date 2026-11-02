@@ -210,7 +210,7 @@ export default function MessageItem({ message }) {
   return (
     <>
       <div className={`group flex flex-col my-1.5 ${isSentByMe ? 'items-end' : 'items-start'}`}>
-        <div className="relative flex items-center gap-2 max-w-[80%] sm:max-w-[65%]">
+        <div className="relative flex items-center gap-2 max-w-[85%] sm:max-w-[80%] lg:max-w-[78%]">
           {/* Action Menu Trigger / Quick Options for Sent Messages */}
           {isSentByMe && (
             <div className="relative opacity-0 group-hover:opacity-100 transition flex items-center gap-1">

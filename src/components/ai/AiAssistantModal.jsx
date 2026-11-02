@@ -152,18 +152,113 @@ export default function AiAssistantModal({ onClose }) {
         })
       });
 
-      const data = await res.json();
 
-      if (res.ok && data.status === 'success') {
-        const aiResponseText = data.response || 'No response received.';
+const contentType = res.headers.get('content-type') || '';
+
+if (!res.ok) {
+  const errorData = await res.json().catch(() => ({}));
+  throw new Error(errorData.message || `Server error ${res.status}`);
+}
+
+if (contentType.includes('text/event-stream')) {
+  if (!res.body) {
+    throw new Error('Streaming response body is empty.');
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let fullResponse = '';
+
+  const processSSELine = (line) => {
+    if (!line.startsWith('data:')) return;
+
+    const dataText = line.slice(5).trim();
+
+    if (!dataText || dataText === '[DONE]') return;
+
+    try {
+      const parsed = JSON.parse(dataText);
+
+      if (parsed.error) {
+        throw new Error(parsed.error);
+      }
+
+      const chunk =
+        parsed.response ||
+        parsed.choices?.[0]?.delta?.content ||
+        parsed.delta?.content ||
+        parsed.text ||
+        '';
+
+      if (typeof chunk === 'string' && chunk.length > 0) {
+        fullResponse += chunk;
+
         setMessages((prev) =>
           prev.map((m) =>
-            m.id === botMsgId ? { ...m, text: aiResponseText, isLoading: false } : m
+            m.id === botMsgId
+              ? { ...m, text: fullResponse, isLoading: false }
+              : m
           )
         );
-      } else {
-        throw new Error(data.message || `Server error ${res.status}`);
       }
+    } catch (err) {
+      if (err.message !== 'Unexpected end of JSON input') {
+        console.error('AI Stream Parse Error:', err);
+      }
+    }
+  };
+
+  while (true) {
+    const { value, done } = await reader.read();
+
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+
+    for (const line of lines) {
+      processSSELine(line.trim());
+    }
+  }
+
+  buffer += decoder.decode();
+
+  if (buffer.trim()) {
+    processSSELine(buffer.trim());
+  }
+
+  if (!fullResponse) {
+    throw new Error('AI returned an empty response.');
+  }
+
+  setMessages((prev) =>
+    prev.map((m) =>
+      m.id === botMsgId
+        ? { ...m, text: fullResponse, isLoading: false }
+        : m
+    )
+  );
+} else {
+  const data = await res.json();
+
+  if (data.status === 'success') {
+    const aiResponseText = data.response || 'No response received.';
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === botMsgId
+          ? { ...m, text: aiResponseText, isLoading: false }
+          : m
+      )
+    );
+  } else {
+    throw new Error(data.message || 'AI response failed.');
+  }
+}
+
     } catch (err) {
       console.error('AI Chat Error:', err);
       const errMsg = err.message || 'Failed to connect to AI Assistant';

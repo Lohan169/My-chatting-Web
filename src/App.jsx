@@ -21,10 +21,10 @@ function DashboardLayout() {
         />
       )}
 
-      {/* Sidebar Component */}
+      {/* Sidebar Component: Fixed width w-80 (320px) / lg:w-96 (384px) on Desktop */}
       <div
-        className={`h-full shrink-0 ${
-          activeContact ? 'hidden md:flex' : 'w-full md:w-80 lg:w-96 flex'
+        className={`h-full shrink-0 w-full md:w-80 lg:w-96 ${
+          activeContact ? 'hidden md:flex' : 'flex'
         } ${
           isMobileSidebarOpen
             ? '!flex fixed inset-y-0 left-0 z-50 w-[85vw] max-w-sm md:relative md:w-80 lg:w-96 md:max-w-none'
@@ -34,7 +34,7 @@ function DashboardLayout() {
         <Sidebar onCloseMobile={() => setIsMobileSidebarOpen(false)} />
       </div>
 
-      {/* Chat Window Component */}
+      {/* Chat Window Component: Expands flex-1 to fill all remaining desktop screen space */}
       <div
         className={`h-full flex-1 min-w-0 ${
           !activeContact ? 'hidden md:flex' : 'w-full flex'
