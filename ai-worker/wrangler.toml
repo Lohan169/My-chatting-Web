@@ -1,0 +1,22 @@
+name = "chat-ai-worker"
+main = "index.js"
+compatibility_date = "2024-08-13"
+
+[ai]
+binding = "AI"
+
+[triggers]
+crons = ["* * * * *"] # Every minute
+
+# Secrets should be set using 'wrangler secret put'
+# FIREBASE_PROJECT_ID
+# FIREBASE_SERVICE_ACCOUNT_EMAIL
+# FIREBASE_SERVICE_ACCOUNT_PRIVATE_KEY
+
+[[durable_objects.bindings]]
+name = "CHAT_REPLY_TIMER"
+class_name = "ChatReplyTimer"
+
+[exports.ChatReplyTimer]
+type = "durable-object"
+storage = "sqlite"
