@@ -1,10 +1,10 @@
-
 name: Deploy Chatting Web to GitHub Pages
 
 on:
   push:
     branches:
       - main
+      - restore-nov2-337pm
   workflow_dispatch:
 
 permissions:
