@@ -3,6 +3,7 @@ import { useAuth } from '../../context/AuthContext';
 import { uploadImageToCloudinary } from '../../utils/cloudinaryUtil';
 import { formatTime } from '../../utils/timeUtil';
 import { renderMessageText } from '../../utils/textUtil';
+import AiMarkdownRenderer from './AiMarkdownRenderer';
 import {
   X,
   Bot,
@@ -152,47 +153,86 @@ export default function AiAssistantModal({ onClose }) {
         })
       });
 
+      const contentType = res.headers.get('content-type') || '';
 
-const contentType = res.headers.get('content-type') || '';
-
-if (!res.ok) {
-  const errorData = await res.json().catch(() => ({}));
-  throw new Error(errorData.message || `Server error ${res.status}`);
-}
-
-if (contentType.includes('text/event-stream')) {
-  if (!res.body) {
-    throw new Error('Streaming response body is empty.');
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let fullResponse = '';
-
-  const processSSELine = (line) => {
-    if (!line.startsWith('data:')) return;
-
-    const dataText = line.slice(5).trim();
-
-    if (!dataText || dataText === '[DONE]') return;
-
-    try {
-      const parsed = JSON.parse(dataText);
-
-      if (parsed.error) {
-        throw new Error(parsed.error);
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.message || `Server error ${res.status}`);
       }
 
-      const chunk =
-        parsed.response ||
-        parsed.choices?.[0]?.delta?.content ||
-        parsed.delta?.content ||
-        parsed.text ||
-        '';
+      if (contentType.includes('text/event-stream')) {
+        if (!res.body) {
+          throw new Error('Streaming response body is empty.');
+        }
 
-      if (typeof chunk === 'string' && chunk.length > 0) {
-        fullResponse += chunk;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let fullResponse = '';
+
+        const processSSELine = (line) => {
+          if (!line.startsWith('data:')) return;
+
+          const dataText = line.slice(5).trim();
+
+          if (!dataText || dataText === '[DONE]') return;
+
+          try {
+            const parsed = JSON.parse(dataText);
+
+            if (parsed.error) {
+              throw new Error(parsed.error);
+            }
+
+            const chunk =
+              parsed.response ||
+              parsed.choices?.[0]?.delta?.content ||
+              parsed.delta?.content ||
+              parsed.text ||
+              '';
+
+            if (typeof chunk === 'string' && chunk.length > 0) {
+              fullResponse += chunk;
+
+              setMessages((prev) =>
+                prev.map((m) =>
+                  m.id === botMsgId
+                    ? { ...m, text: fullResponse, isLoading: false }
+                    : m
+                )
+              );
+            }
+          } catch (err) {
+            if (err.message !== 'Unexpected end of JSON input') {
+              console.error('AI Stream Parse Error:', err);
+            }
+          }
+        };
+
+        while (true) {
+          const { value, done } = await reader.read();
+
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            processSSELine(line.trim());
+          }
+        }
+
+        buffer += decoder.decode();
+
+        if (buffer.trim()) {
+          processSSELine(buffer.trim());
+        }
+
+        if (!fullResponse) {
+          throw new Error('AI returned an empty response.');
+        }
 
         setMessages((prev) =>
           prev.map((m) =>
@@ -201,63 +241,23 @@ if (contentType.includes('text/event-stream')) {
               : m
           )
         );
+      } else {
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          const aiResponseText = data.response || 'No response received.';
+
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === botMsgId
+                ? { ...m, text: aiResponseText, isLoading: false }
+                : m
+            )
+          );
+        } else {
+          throw new Error(data.message || 'AI response failed.');
+        }
       }
-    } catch (err) {
-      if (err.message !== 'Unexpected end of JSON input') {
-        console.error('AI Stream Parse Error:', err);
-      }
-    }
-  };
-
-  while (true) {
-    const { value, done } = await reader.read();
-
-    if (done) break;
-
-    buffer += decoder.decode(value, { stream: true });
-
-    const lines = buffer.split('\n');
-    buffer = lines.pop() || '';
-
-    for (const line of lines) {
-      processSSELine(line.trim());
-    }
-  }
-
-  buffer += decoder.decode();
-
-  if (buffer.trim()) {
-    processSSELine(buffer.trim());
-  }
-
-  if (!fullResponse) {
-    throw new Error('AI returned an empty response.');
-  }
-
-  setMessages((prev) =>
-    prev.map((m) =>
-      m.id === botMsgId
-        ? { ...m, text: fullResponse, isLoading: false }
-        : m
-    )
-  );
-} else {
-  const data = await res.json();
-
-  if (data.status === 'success') {
-    const aiResponseText = data.response || 'No response received.';
-
-    setMessages((prev) =>
-      prev.map((m) =>
-        m.id === botMsgId
-          ? { ...m, text: aiResponseText, isLoading: false }
-          : m
-      )
-    );
-  } else {
-    throw new Error(data.message || 'AI response failed.');
-  }
-}
 
     } catch (err) {
       console.error('AI Chat Error:', err);
@@ -382,10 +382,12 @@ if (contentType.includes('text/event-stream')) {
                     <Loader2 className="w-4 h-4 animate-spin text-[#38BDF8]" />
                     <span>Thinking...</span>
                   </div>
-                ) : (
-                  <p className="text-xs sm:text-sm leading-relaxed whitespace-pre-wrap break-words">
-                    {renderMessageText(msg.text, msg.isUser, msg.isUser ? 'default' : 'dark')}
+                ) : msg.isUser ? (
+                  <p className="text-[16px] leading-[1.6] whitespace-pre-wrap break-words">
+                    {renderMessageText(msg.text, true, 'default')}
                   </p>
+                ) : (
+                  <AiMarkdownRenderer content={msg.text} />
                 )}
 
                 <p
@@ -479,7 +481,7 @@ if (contentType.includes('text/event-stream')) {
                   : 'Ask AI anything in Bangla or English...'
               }
               disabled={isSending}
-              className="w-full bg-[#0F172A] border border-[#334155] rounded-2xl py-2.5 px-4 text-xs sm:text-sm text-white placeholder-[#64748B] focus:outline-none focus:border-[#38BDF8] transition disabled:opacity-50"
+              className="w-full bg-[#0F172A] border border-[#334155] rounded-2xl py-2.5 px-4 text-[16px] text-white placeholder-[#64748B] placeholder:text-[15px] focus:outline-none focus:border-[#38BDF8] transition disabled:opacity-50"
             />
           </div>
 
