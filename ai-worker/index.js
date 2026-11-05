@@ -237,6 +237,7 @@ return extractWorkersAiText(aiResponse);
 
 async function handleNotify(request, env, ctx) {
   try {
+    const deadline = Date.now() + 8000;
     const authHeader = request.headers.get('Authorization');
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       console.log('Notify: No auth header');
@@ -269,36 +270,23 @@ async function handleNotify(request, env, ctx) {
 
     const accessToken = await getFirestoreAccessToken(env);
 
-    // Check if either recipient or sender has AI enabled for this chat
-    let targetAiUserId = null;
-
+    // Only the receiving user's AI setting can trigger an AI reply.
     const recipientAiSettings = await firestoreGet(
       `chats/${chatId}/aiSettings/${recipientId}`,
       accessToken,
       env
     );
 
-    if (recipientAiSettings && recipientAiSettings.enabled) {
-      targetAiUserId = recipientId;
-    } else {
-      const senderAiSettings = await firestoreGet(
-        `chats/${chatId}/aiSettings/${senderId}`,
-        accessToken,
-        env
-      );
-      if (senderAiSettings && senderAiSettings.enabled) {
-        targetAiUserId = senderId;
-      }
+    if (!recipientAiSettings || !recipientAiSettings.enabled) {
+      console.log(`Notify: Recipient AI is disabled for ${recipientId}`);
+      return new Response('Recipient AI Disabled', { status: 200 });
     }
 
-    if (!targetAiUserId) {
-      console.log(`Notify: AI is Disabled for chat ${chatId}`);
-      return new Response('AI Disabled for chat', { status: 200 });
-    }
+    const taskId = `${chatId}_${messageId}`;
 
-    // Ensure target AI user's state is WAITING and lastIncomingMessageId is set
-    await firestoreSet(
-      `chats/${chatId}/aiSettings/${targetAiUserId}`,
+    // Update only these fields; preserve the recipient's other AI settings.
+    await firestoreUpdate(
+      `chats/${chatId}/aiSettings/${recipientId}`,
       {
         enabled: true,
         state: 'WAITING',
@@ -308,15 +296,15 @@ async function handleNotify(request, env, ctx) {
       env
     );
 
-    // Create pending task scheduled for 30 seconds from now
-    const taskId = `${chatId}_${messageId}`;
+    // Save the task with an 8-second scheduled time.
     await firestoreSet(
       `aiPendingTasks/${taskId}`,
       {
         chatId,
-        userId: targetAiUserId,
+        userId: recipientId,
         messageId,
-        scheduledTime: new Date(Date.now() + 30000).toISOString(),
+        scheduledTime: new Date(deadline).toISOString(),
+        timerManaged: true,
         status: 'PENDING',
         createdAt: new Date().toISOString()
       },
@@ -324,22 +312,40 @@ async function handleNotify(request, env, ctx) {
       env
     );
 
-    console.log(`Notify: Task ${taskId} scheduled successfully for user ${targetAiUserId} with 30s delay`);
+    // Schedule the exact 8-second timer through the Durable Object.
+    const timerId = env.CHAT_REPLY_TIMER.idFromName(`${chatId}_${recipientId}`);
+    const timerStub = env.CHAT_REPLY_TIMER.get(timerId);
 
-    // Register background timer via Cloudflare Worker ctx.waitUntil for exact 30s delay
-    if (ctx && typeof ctx.waitUntil === 'function') {
-      ctx.waitUntil((async () => {
-        console.log(`[waitUntil] Background 30s timer started for task ${taskId}`);
-        await new Promise(resolve => setTimeout(resolve, 30500));
-        console.log(`[waitUntil] Background 30s timer finished, processing task ${taskId}`);
-        try {
-          const bgAccessToken = await getFirestoreAccessToken(env);
-          await processSingleTask(taskId, chatId, targetAiUserId, messageId, bgAccessToken, env);
-        } catch (err) {
-          console.error(`[waitUntil] Task ${taskId} execution error:`, err.message);
-        }
-      })());
+    const timerResponse = await timerStub.fetch(
+      'https://chat-reply-timer/schedule',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          taskId,
+          chatId,
+          userId: recipientId,
+          messageId,
+          deadline
+        })
+      }
+    );
+
+    if (!timerResponse.ok) {
+      console.error('Notify: Durable Object scheduling failed:', timerResponse.status);
+
+      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
+      await firestoreUpdate(
+        `chats/${chatId}/aiSettings/${recipientId}`,
+        { state: 'ERROR' },
+        accessToken,
+        env
+      );
+
+      return new Response('Timer scheduling failed', { status: 503 });
     }
+
+    console.log(`Notify: Task ${taskId} scheduled for recipient ${recipientId} after 8 seconds`);
 
     return new Response('Task scheduled', { status: 200 });
 
@@ -488,6 +494,11 @@ async function processPendingTasks(env) {
         continue;
       }
 
+      // Durable Object manages these tasks with an exact 8-second alarm.
+      if (fields.timerManaged === true) {
+        continue;
+      }
+
       const scheduledMs = new Date(fields.scheduledTime).getTime();
       if (isNaN(scheduledMs) || scheduledMs > now) {
         console.log(`Task ${fields.messageId} scheduled for future: ${fields.scheduledTime}`);
@@ -509,51 +520,42 @@ async function processPendingTasks(env) {
 async function processSingleTask(taskId, chatId, userId, messageId, accessToken, env) {
   console.log(`--- Processing Task: ${taskId} ---`);
   try {
-    const aiSettings = await firestoreGetWithMeta(`chats/${chatId}/aiSettings/${userId}`, accessToken, env);
+    const aiSettings = await firestoreGetWithMeta(
+      `chats/${chatId}/aiSettings/${userId}`,
+      accessToken,
+      env
+    );
+
     if (!aiSettings) {
       console.log('Task Skipped: AI Settings not found');
       await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
-      return;
-    }
-    if (!aiSettings.enabled) {
-      console.log('Task Skipped: AI is disabled');
-      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
-      return;
-    }
-    if (aiSettings.state === 'PAUSED') {
-      console.log('Task Skipped: AI is PAUSED by user activity');
-      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
-      return;
-    }
-    if (aiSettings.lastIncomingMessageId && aiSettings.lastIncomingMessageId !== messageId) {
-      console.log('Task Skipped: Message is stale');
-      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
-      return;
+      return 'CANCELLED';
     }
 
-    const chatDoc = await firestoreGet(`chats/${chatId}`, accessToken, env);
-    if (chatDoc?.typingStatus?.[userId] === true) {
-      console.log('Task Postponed: User is currently typing');
-      return; // Leave PENDING for next cron tick
+    if (!aiSettings.enabled || aiSettings.state === 'PAUSED') {
+      console.log('Task Skipped: AI disabled or human replied');
+      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
+      return 'CANCELLED';
     }
 
-    const now = Date.now();
-    const lastActivity = aiSettings.lastUserActivity || 0;
-    const diff = now - lastActivity;
-
-    if (diff < 30000) {
-      console.log('Task Postponed: User was active within the 30s window');
-      return; // Leave PENDING for next cron tick
+    if (aiSettings.lastIncomingMessageId !== messageId) {
+      console.log('Task Skipped: Incoming message is no longer latest');
+      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
+      return 'CANCELLED';
     }
 
     if (aiSettings.lastProcessedMessageId === messageId) {
       console.log('Task Skipped: Already processed');
       await updateTaskStatus(taskId, 'COMPLETED', accessToken, env);
-      return;
+      return 'COMPLETED';
     }
 
-    await firestoreUpdate(`chats/${chatId}/aiSettings/${userId}`, { state: 'PROCESSING' }, accessToken, env);
-
+    await firestoreUpdate(
+      `chats/${chatId}/aiSettings/${userId}`,
+      { state: 'PROCESSING' },
+      accessToken,
+      env
+    );
     const messages = await firestoreQuery(
       `chats/${chatId}/messages`,
       [],
@@ -568,13 +570,15 @@ async function processSingleTask(taskId, chatId, userId, messageId, accessToken,
       const text = m.fields.text?.stringValue || '';
       const type = m.fields.type?.stringValue || 'text';
       const isAiMsg = m.fields.isAi?.booleanValue === true;
+      const senderId = m.fields.senderId?.stringValue || '';
+      const isAssistantMsg = isAiMsg || senderId === userId;
 
       let content = text;
       if (!text && type === 'image') content = '[Sent an image]';
       if (!text && type === 'voice') content = '[Sent a voice message]';
 
       return {
-        role: isAiMsg ? 'assistant' : 'user',
+        role: isAssistantMsg ? 'assistant' : 'user',
         content: content || '[Attachment]'
       };
     });
@@ -623,18 +627,22 @@ Format your output as a JSON object: { "action": "REPLY_NEEDED", "reply": "your 
     }
 
     // Pre-commit double verification before writing AI response to prevent race conditions
-    const preCommitAiSettings = await firestoreGetWithMeta(`chats/${chatId}/aiSettings/${userId}`, accessToken, env);
-    if (!preCommitAiSettings || !preCommitAiSettings.enabled || preCommitAiSettings.state === 'PAUSED') {
-      console.log('Task Aborted at pre-commit: User manually replied or disabled AI during generation');
-      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
-      return;
-    }
-    const preCommitDiff = Date.now() - (preCommitAiSettings.lastUserActivity || 0);
-    if (preCommitDiff < 30000) {
-      console.log('Task Aborted at pre-commit: User was active within the 30s window');
-      return; // Postpone, leave pending
-    }
+    const preCommitAiSettings = await firestoreGetWithMeta(
+      `chats/${chatId}/aiSettings/${userId}`,
+      accessToken,
+      env
+    );
 
+    if (
+      !preCommitAiSettings ||
+      !preCommitAiSettings.enabled ||
+      preCommitAiSettings.state === 'PAUSED' ||
+      preCommitAiSettings.lastIncomingMessageId !== messageId
+    ) {
+      console.log('Task Aborted at pre-commit: AI disabled, human replied, or message stale');
+      await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
+      return 'CANCELLED';
+    }
     const replyText = result?.reply || result?.response || (typeof result === 'string' ? result : null);
 
     if (replyText) {
@@ -697,7 +705,7 @@ Format your output as a JSON object: { "action": "REPLY_NEEDED", "reply": "your 
         if (commitResult.preconditionFailed) {
           console.log('Task Aborted: Precondition failed during atomic commit due to concurrent user reply');
           await updateTaskStatus(taskId, 'CANCELLED', accessToken, env);
-          return;
+          return 'CANCELLED';
         } else {
           throw new Error('Atomic transaction commit failed with status ' + commitResult.status);
         }
@@ -712,10 +720,13 @@ Format your output as a JSON object: { "action": "REPLY_NEEDED", "reply": "your 
     }
 
     await updateTaskStatus(taskId, 'COMPLETED', accessToken, env);
+    return 'COMPLETED';
 
   } catch (error) {
     console.error('ProcessSingleTask Error:', error.message);
     await firestoreUpdate(`chats/${chatId}/aiSettings/${userId}`, { state: 'ERROR' }, accessToken, env);
+    await updateTaskStatus(taskId, 'ERROR', accessToken, env);
+    return 'ERROR';
   }
 }
 
@@ -966,12 +977,16 @@ async function firestoreCommitTransaction(writes, token, env) {
     body: JSON.stringify({ writes })
   });
 
-  if (res.status === 412 || res.status === 409) {
-    console.warn('Firestore Commit Precondition Failed (412/409): Concurrent user update detected');
+  const data = await res.json();
+
+  if (
+    res.status === 412 ||
+    res.status === 409 ||
+    (res.status === 400 && data.error?.status === 'FAILED_PRECONDITION')
+  ) {
+    console.warn('Firestore Commit Precondition Failed: Concurrent user update detected');
     return { success: false, preconditionFailed: true, status: res.status };
   }
-
-  const data = await res.json();
   if (!res.ok) {
     console.error('Firestore Commit Error:', JSON.stringify(data));
     return { success: false, preconditionFailed: false, status: res.status, error: data };
@@ -1086,21 +1101,18 @@ export class ChatReplyTimer {
 
     const task = await request.json();
 
-    if (!task.taskId || !task.chatId || !task.userId || !task.messageId) {
+    if (!task.taskId || !task.chatId || !task.userId || !task.messageId || !Number.isFinite(Number(task.deadline))) {
       return new Response('Missing task data', { status: 400 });
     }
 
-    let delayMs = 7000;
-
     await this.ctx.blockConcurrencyWhile(async () => {
-      const loopStarted = await this.ctx.storage.get('loopStarted');
-
-      delayMs = loopStarted ? 7000 : 8000;
-
-      await this.ctx.storage.put('loopStarted', true);
       await this.ctx.storage.put('pendingTask', task);
-      await this.ctx.storage.setAlarm(Date.now() + delayMs);
+      await this.ctx.storage.setAlarm(Math.max(Date.now(), Number(task.deadline)));
     });
+
+    const delayMs = Math.max(0, Number(task.deadline) - Date.now());
+
+    console.log(`ChatReplyTimer: Scheduled ${task.messageId} with ${delayMs}ms remaining`);
 
     return Response.json({ status: 'scheduled', delayMs });
   }
@@ -1121,19 +1133,23 @@ export class ChatReplyTimer {
         this.env
       );
 
-      const latestTask = await this.ctx.storage.get('pendingTask');
-
-      if (latestTask?.messageId !== task.messageId) return;
-
-      if (result === 'POSTPONED') {
-        await this.ctx.storage.setAlarm(Date.now() + 7000);
-        return;
+      if (!['COMPLETED', 'CANCELLED', 'ERROR'].includes(result)) {
+        throw new Error(`Unexpected task result: ${result}`);
       }
 
-      await this.ctx.storage.delete('pendingTask');
+      const latestTask = await this.ctx.storage.get('pendingTask');
+
+      // Do not remove a newer message's timer.
+      if (latestTask?.messageId === task.messageId) {
+        await this.ctx.storage.delete('pendingTask');
+      }
 
     } catch (error) {
       console.error('ChatReplyTimer Alarm Error:', error.message);
+      throw error;
     }
   }
 }
+
+
+
