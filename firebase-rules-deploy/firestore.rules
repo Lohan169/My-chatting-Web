@@ -18,6 +18,15 @@ service cloud.firestore {
         (request.auth.uid in chatId.split('_'));
     }
 
+    function isBlockedPair(userA, userB) {
+      return exists(
+        /databases/$(database)/documents/users/$(userA)/blockedUsers/$(userB)
+      ) ||
+      exists(
+        /databases/$(database)/documents/users/$(userB)/blockedUsers/$(userA)
+      );
+    }
+
     match /users/{userId} {
       allow read: if isSignedIn();
 
@@ -39,7 +48,14 @@ service cloud.firestore {
       }
 
       match /blockedUsers/{blockedUserId} {
-        allow read, create, update, delete:
+        allow get: if isSignedIn() &&
+          (request.auth.uid == userId ||
+           blockedUserId == request.auth.uid);
+
+        allow list: if isSignedIn() &&
+          request.auth.uid == userId;
+
+        allow create, update, delete:
           if isSignedIn() && request.auth.uid == userId;
       }
 
@@ -71,7 +87,18 @@ service cloud.firestore {
       allow write: if isParticipant(chatId);
 
       match /messages/{messageId} {
-        allow read, write: if isParticipant(chatId);
+        allow read: if isParticipant(chatId);
+
+        allow create: if isParticipant(chatId) &&
+          request.resource.data.senderId == request.auth.uid &&
+          request.resource.data.receiverId != request.auth.uid &&
+          request.resource.data.receiverId in chatId.split('_') &&
+          !isBlockedPair(
+            request.resource.data.senderId,
+            request.resource.data.receiverId
+          );
+
+        allow update, delete: if isParticipant(chatId);
       }
 
       match /aiSettings/{userId} {

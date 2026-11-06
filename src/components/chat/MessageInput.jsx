@@ -15,7 +15,7 @@ import {
 const BLOCKED_EXTENSIONS = ['exe', 'bat', 'cmd', 'sh', 'ps1', 'msi', 'jar', 'vbs', 'scr', 'pif', 'cpl', 'gadget', 'app', 'dmg'];
 
 export default function MessageInput() {
-  const { sendMessage, sendImage, sendVoice, sendDocument, activeReplyMessage, cancelReply } = useChat();
+  const { sendMessage, sendImage, sendVoice, sendDocument, activeReplyMessage, cancelReply, isActiveContactBlocked } = useChat();
   const [text, setText] = useState('');
   const [selectedFiles, setSelectedFiles] = useState([]);
   const [selectedDocs, setSelectedDocs] = useState([]);
@@ -129,6 +129,11 @@ export default function MessageInput() {
     e.preventDefault();
     setError('');
 
+    if (isActiveContactBlocked) {
+      setError('Messaging is unavailable because one of you has blocked the other.');
+      return;
+    }
+
     // Send Photo Attachments
     if (selectedFiles.length > 0) {
       setIsSending(true);
@@ -216,6 +221,10 @@ export default function MessageInput() {
 
   const handleSendVoice = async (audioBlob, duration, onProgress, onXhrCreated) => {
     try {
+      if (isActiveContactBlocked) {
+        setError('Voice messaging is unavailable because one of you has blocked the other.');
+        return;
+      }
       setError('');
       await sendVoice(audioBlob, duration, onProgress, onXhrCreated);
       setIsRecordingVoice(false);
@@ -296,7 +305,7 @@ export default function MessageInput() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isSending}
+                  disabled={isSending || isActiveContactBlocked}
                   className="shrink-0 w-16 h-16 sm:w-20 sm:h-20 rounded-xl border-2 border-dashed border-[#CBD5E1] hover:border-[#5B5CF0] bg-[#F1F5F9] hover:bg-white flex flex-col items-center justify-center text-[#64748B] hover:text-[#5B5CF0] transition"
                   title="Add More Photos"
                 >
@@ -367,7 +376,7 @@ export default function MessageInput() {
                 <button
                   type="button"
                   onClick={() => docInputRef.current?.click()}
-                  disabled={isSending}
+                  disabled={isSending || isActiveContactBlocked}
                   className="shrink-0 p-2.5 rounded-xl border-2 border-dashed border-[#CBD5E1] hover:border-[#5B5CF0] bg-[#F1F5F9] hover:bg-white flex items-center gap-1.5 text-xs text-[#64748B] hover:text-[#5B5CF0] font-semibold transition"
                   title="Add More Documents"
                 >
@@ -378,6 +387,11 @@ export default function MessageInput() {
             </div>
           )}
 
+          {isActiveContactBlocked && (
+            <div className="px-4 py-2 bg-[#FEF2F2] text-[#B91C1C] text-xs border-b border-[#FECACA]">
+              Messaging and file sharing are unavailable because one of you has blocked the other.
+            </div>
+          )}
           {/* Error Banner */}
           {error && (
             <div className="px-4 py-1.5 bg-[#EF4444]/10 text-[#EF4444] text-[11px] border-b border-[#EF4444]/20 flex items-center justify-between">
@@ -393,6 +407,7 @@ export default function MessageInput() {
               type="file"
               ref={fileInputRef}
               accept="image/*"
+              disabled={isActiveContactBlocked}
               multiple
               onChange={handleFileChange}
               className="hidden"
@@ -403,6 +418,7 @@ export default function MessageInput() {
               type="file"
               ref={docInputRef}
               accept=".pdf,.doc,.docx,.xls,.xlsx,.csv,.ppt,.pptx,.txt,.zip,.rar,.7z,.json,.xml,.pages,.numbers,.key,.rtf,.odt,.ods,.odp"
+              disabled={isActiveContactBlocked}
               multiple
               onChange={handleDocFileChange}
               className="hidden"
@@ -412,7 +428,7 @@ export default function MessageInput() {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              disabled={isSending}
+              disabled={isSending || isActiveContactBlocked}
               className="p-2 sm:p-2.5 rounded-full text-[#64748B] hover:text-[#5B5CF0] hover:bg-white transition disabled:opacity-40 shrink-0"
               title="Attach Photo"
             >
@@ -423,7 +439,7 @@ export default function MessageInput() {
             <button
               type="button"
               onClick={() => docInputRef.current?.click()}
-              disabled={isSending}
+              disabled={isSending || isActiveContactBlocked}
               className="p-2 sm:p-2.5 rounded-full text-[#64748B] hover:text-[#5B5CF0] hover:bg-white transition disabled:opacity-40 shrink-0"
               title="Attach Document or File"
             >
@@ -444,7 +460,7 @@ export default function MessageInput() {
                     ? `Selected ${selectedDocs.length} document(s)...`
                     : "Type a message..."
                 }
-                disabled={isSending || selectedFiles.length > 0 || selectedDocs.length > 0}
+                disabled={isSending || isActiveContactBlocked || selectedFiles.length > 0 || selectedDocs.length > 0}
                 className="w-full bg-white border border-[#E2E8F0] rounded-full py-2.5 px-4 text-[15px] text-[#0F172A] placeholder-[#64748B] focus:outline-none focus:border-[#5B5CF0] focus:ring-2 focus:ring-[#5B5CF0]/20 transition shadow-xs disabled:opacity-50"
               />
             </div>
@@ -453,7 +469,7 @@ export default function MessageInput() {
             <button
               type="button"
               onClick={() => setIsRecordingVoice(true)}
-              disabled={isSending || selectedFiles.length > 0 || selectedDocs.length > 0}
+              disabled={isSending || isActiveContactBlocked || selectedFiles.length > 0 || selectedDocs.length > 0}
               className="p-2 sm:p-2.5 rounded-full bg-[#4752C4] hover:bg-[#3B44A1] text-white transition disabled:opacity-40 shadow-md shrink-0"
               title="Record Voice Message"
             >
@@ -463,7 +479,7 @@ export default function MessageInput() {
             {/* Inline Send Button */}
             <button
               type="submit"
-              disabled={(!text.trim() && selectedFiles.length === 0 && selectedDocs.length === 0) || isSending}
+              disabled={isActiveContactBlocked || (!text.trim() && selectedFiles.length === 0 && selectedDocs.length === 0) || isSending}
               className="w-10 h-10 sm:w-11 sm:h-11 rounded-full bg-[#5B5CF0] hover:bg-[#4A4BCF] active:scale-95 hover:scale-105 hover:shadow-lg hover:shadow-[#5B5CF0]/30 text-white disabled:opacity-40 disabled:hover:scale-100 disabled:hover:shadow-none disabled:active:scale-100 transition-all duration-200 ease-out shadow-md shadow-[#5B5CF0]/25 flex items-center justify-center shrink-0"
               title="Send Message"
             >

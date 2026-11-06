@@ -1,4 +1,4 @@
-﻿import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   X, User, Circle, Image as ImageIcon,
   FileText, Mic, ExternalLink, Clock, Info, Ban, ShieldCheck
@@ -11,7 +11,7 @@ const formatLastSeen = (value) => {
   return `Last seen ${date.toLocaleString()}`;
 };
 
-export default function ContactProfilePanel({ contact, messages = [], onClose, isBlocked = false, onBlock, onUnblock }) {
+export default function ContactProfilePanel({ contact, messages = [], onClose, isBlockedByMe = false, isBlockedByThem = false, onBlock, onUnblock }) {
   const [tab, setTab] = useState('overview');
 
   const shared = useMemo(() => ({
@@ -98,7 +98,7 @@ export default function ContactProfilePanel({ contact, messages = [], onClose, i
             </div>
 
             <div className="pt-1">
-              {isBlocked ? (
+              {isBlockedByMe ? (
                 <button
                   type="button"
                   onClick={async () => {
@@ -126,6 +126,11 @@ export default function ContactProfilePanel({ contact, messages = [], onClose, i
                 </button>
               )}
             </div>
+            {isBlockedByThem && (
+              <div className="mt-2 rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] p-3 text-xs text-[#B91C1C]">
+                This contact has blocked you. You cannot send messages or files to this contact.
+              </div>
+            )}
             <div className="flex items-start gap-2 text-xs text-[#64748B] bg-[#F8FAFC] border border-[#E2E8F0] rounded-xl p-3">
               <Info className="w-4 h-4 shrink-0 mt-0.5" />
               <span>This contact profile is view-only. Only the account owner can manage their own profile.</span>

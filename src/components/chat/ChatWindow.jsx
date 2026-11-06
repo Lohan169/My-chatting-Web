@@ -1,4 +1,4 @@
-﻿import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useChat } from '../../context/ChatContext';
 import MessageItem from './MessageItem';
 import MessageInput from './MessageInput';
@@ -15,6 +15,8 @@ export default function ChatWindow({ onOpenMobileSidebar }) {
     aiSettings,
     toggleAiAutoReply,
     isActiveContactBlocked,
+    blockedUserIds,
+    activeContactBlockedYou,
     blockActiveContact,
     unblockActiveContact
   } = useChat();
@@ -166,7 +168,8 @@ export default function ChatWindow({ onOpenMobileSidebar }) {
         <ContactProfilePanel
           contact={activeContact}
           messages={messages}
-          isBlocked={isActiveContactBlocked}
+          isBlockedByMe={blockedUserIds.includes(activeContact.uid)}
+          isBlockedByThem={activeContactBlockedYou}
           onBlock={blockActiveContact}
           onUnblock={unblockActiveContact}
           onClose={() => setIsContactProfileOpen(false)}

@@ -311,3 +311,41 @@ export const unhideChat = async (userId, chatId) => {
 
   await deleteDoc(doc(db, 'users', userId, 'hiddenChats', chatId));
 };
+
+// Check whether the other user has blocked the current user in real time.
+export const subscribeToIncomingBlock = (currentUserId, otherUserId, callback, onError) => {
+  if (!currentUserId || !otherUserId) {
+    callback(false);
+    return () => {};
+  }
+
+  const incomingBlockRef = doc(
+    db,
+    'users',
+    otherUserId,
+    'blockedUsers',
+    currentUserId
+  );
+
+  return onSnapshot(
+    incomingBlockRef,
+    (snapshot) => callback(snapshot.exists()),
+    (error) => {
+      if (onError) onError(error);
+    }
+  );
+};
+
+// Check both directions before sending any message or attachment.
+export const hasBlockedEitherWay = async (currentUserId, otherUserId) => {
+  if (!currentUserId || !otherUserId) {
+    throw new Error('User information is missing');
+  }
+
+  const [outgoingBlock, incomingBlock] = await Promise.all([
+    getDoc(doc(db, 'users', currentUserId, 'blockedUsers', otherUserId)),
+    getDoc(doc(db, 'users', otherUserId, 'blockedUsers', currentUserId))
+  ]);
+
+  return outgoingBlock.exists() || incomingBlock.exists();
+};

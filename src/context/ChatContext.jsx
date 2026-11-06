@@ -1,6 +1,6 @@
-﻿import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { subscribeToUsers, subscribeToContacts, addContact as saveContact, removeContact as deleteContact, subscribeToHiddenChats, hideChat as saveHiddenChat, unhideChat as restoreHiddenChat, subscribeToBlockedUsers, blockContact as saveBlockedContact, unblockContact as removeBlockedContact } from '../firebase/userService';
+import { subscribeToUsers, subscribeToContacts, addContact as saveContact, removeContact as deleteContact, subscribeToHiddenChats, hideChat as saveHiddenChat, unhideChat as restoreHiddenChat, subscribeToBlockedUsers, subscribeToIncomingBlock, hasBlockedEitherWay, blockContact as saveBlockedContact, unblockContact as removeBlockedContact } from '../firebase/userService';
 import {
   subscribeToUserChats,
   subscribeToMessages,
@@ -42,6 +42,7 @@ export const ChatProvider = ({ children }) => {
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [permissionError, setPermissionError] = useState(null);
   const [blockedUserIds, setBlockedUserIds] = useState([]);
+  const [activeContactBlockedYou, setActiveContactBlockedYou] = useState(false);
 
   // Subscribe only to explicitly saved Contacts.
   useEffect(() => {
@@ -98,6 +99,22 @@ export const ChatProvider = ({ children }) => {
 
     return unsubscribe;
   }, [currentUser]);
+  // Subscribe to whether the active contact has blocked the current user.
+  useEffect(() => {
+    if (!currentUser?.uid || !activeContact?.uid) {
+      setActiveContactBlockedYou(false);
+      return;
+    }
+
+    const unsubscribe = subscribeToIncomingBlock(
+      currentUser.uid,
+      activeContact.uid,
+      (blocked) => setActiveContactBlockedYou(blocked),
+      (error) => console.error('Incoming block status read error:', error)
+    );
+
+    return unsubscribe;
+  }, [currentUser?.uid, activeContact?.uid]);
   // Subscribe to this user's hidden conversations.
   useEffect(() => {
     if (!currentUser) {
@@ -255,12 +272,15 @@ export const ChatProvider = ({ children }) => {
   };
 
   const isActiveContactBlocked = Boolean(
-    activeContact?.uid && blockedUserIds.includes(activeContact.uid)
+    activeContact?.uid &&
+    (blockedUserIds.includes(activeContact.uid) || activeContactBlockedYou)
   );
 
-  const ensureContactNotBlocked = (targetUserId) => {
-    if (blockedUserIds.includes(targetUserId)) {
-      throw new Error('You have blocked this contact. Unblock them to send messages.');
+  const ensureContactNotBlocked = async (targetUserId) => {
+    const blocked = await hasBlockedEitherWay(currentUser.uid, targetUserId);
+
+    if (blocked) {
+      throw new Error('Messaging is unavailable because one of you has blocked the other.');
     }
   };
 
@@ -277,7 +297,7 @@ export const ChatProvider = ({ children }) => {
     if (!currentUser || !activeContact || !activeChatId) {
       throw new Error('Active contact or session missing');
     }
-    ensureContactNotBlocked(activeContact.uid);
+    await ensureContactNotBlocked(activeContact.uid);
     const idToken = await currentUser.getIdToken(false);
     const result = await sendTextMessage(
       activeChatId,
@@ -296,7 +316,7 @@ export const ChatProvider = ({ children }) => {
       throw new Error('Active contact or session missing');
     }
 
-    ensureContactNotBlocked(activeContact.uid);
+    await ensureContactNotBlocked(activeContact.uid);
     const imageUrl = await uploadImageToCloudinary(file, activeChatId, onProgress, onXhrCreated);
     const idToken = await currentUser.getIdToken(false);
 
@@ -318,7 +338,7 @@ export const ChatProvider = ({ children }) => {
       throw new Error('Active contact or session missing');
     }
 
-    ensureContactNotBlocked(activeContact.uid);
+    await ensureContactNotBlocked(activeContact.uid);
     const audioUrl = await uploadVoiceToCloudinary(audioBlob, activeChatId, onProgress, onXhrCreated);
     const idToken = await currentUser.getIdToken(false);
 
@@ -341,7 +361,7 @@ export const ChatProvider = ({ children }) => {
       throw new Error('Active contact or session missing');
     }
 
-    ensureContactNotBlocked(activeContact.uid);
+    await ensureContactNotBlocked(activeContact.uid);
     const fileUrl = await uploadDocumentToCloudinary(file, activeChatId, onProgress, onXhrCreated);
     const idToken = await currentUser.getIdToken(false);
 
@@ -382,8 +402,16 @@ export const ChatProvider = ({ children }) => {
     if (!currentUser || !sourceMessage || !targetContacts || targetContacts.length === 0) {
       throw new Error('Missing parameters for forwarding');
     }
-    const blockedTargets = targetContacts.filter((contact) => blockedUserIds.includes(contact.uid));
-    if (blockedTargets.length > 0) throw new Error('Cannot forward to a contact you have blocked. Unblock them first.');
+    const blockChecks = await Promise.all(
+      targetContacts.map(async (contact) => ({
+        contact,
+        blocked: await hasBlockedEitherWay(currentUser.uid, contact.uid)
+      }))
+    );
+    const blockedTargets = blockChecks.filter((item) => item.blocked);
+    if (blockedTargets.length > 0) {
+      throw new Error('Forwarding is unavailable because one or more recipients have a block between you.');
+    }
     const idToken = await currentUser.getIdToken(false);
     return await forwardMessage(sourceMessage, targetContacts, currentUser.uid, idToken);
   };
@@ -420,13 +448,10 @@ export const ChatProvider = ({ children }) => {
     toggleAiAutoReply,
     blockedUserIds,
     isActiveContactBlocked,
+    activeContactBlockedYou,
     blockActiveContact,
     unblockActiveContact
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };
-
-
-
-
