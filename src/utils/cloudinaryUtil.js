@@ -1,4 +1,4 @@
-export const uploadImageToCloudinary = (file, chatId, onProgress, onXhrCreated) => {
+﻿export const uploadImageToCloudinary = (file, chatId, onProgress, onXhrCreated) => {
   return new Promise((resolve, reject) => {
     if (!file) {
       reject(new Error('No file provided for upload'));
@@ -208,3 +208,49 @@ export const uploadDocumentToCloudinary = (file, chatId, onProgress, onXhrCreate
     xhr.send(formData);
   });
 };
+
+// Upload profile image to Cloudinary
+export const uploadProfileImageToCloudinary = async (file, userId) => {
+  if (!file) {
+    throw new Error('No profile image selected');
+  }
+
+  if (!file.type.startsWith('image/')) {
+    throw new Error('Please select a valid image');
+  }
+
+  const MAX_SIZE = 10 * 1024 * 1024;
+
+  if (file.size > MAX_SIZE) {
+    throw new Error('Profile image must be smaller than 10MB');
+  }
+
+  if (!userId) {
+    throw new Error('User ID is required');
+  }
+
+  const cloudName = 'bgrvouaj';
+  const uploadPreset = 'Chatting_upload';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('upload_preset', uploadPreset);
+  formData.append('folder', `profile_images/${userId}`);
+
+  const response = await fetch(
+    `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`,
+    {
+      method: 'POST',
+      body: formData
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(result.error?.message || 'Profile image upload failed');
+  }
+
+  return result.secure_url;
+};
+

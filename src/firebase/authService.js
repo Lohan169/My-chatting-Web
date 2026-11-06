@@ -1,4 +1,4 @@
-import {
+﻿import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   updateProfile,
@@ -22,3 +22,16 @@ export const registerUser = async (email, password, displayName) => {
 export const logoutUser = async () => {
   await signOut(auth);
 };
+
+// Update Firebase Authentication profile
+export const updateAuthProfile = async (user, profileData) => {
+  if (!user) throw new Error('User is required');
+
+  await updateProfile(user, {
+    displayName: profileData.displayName,
+    photoURL: profileData.photoURL
+  });
+
+  return user;
+};
+

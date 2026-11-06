@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+﻿import React, { createContext, useContext, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { subscribeToUsers } from '../firebase/userService';
+import { subscribeToUsers, subscribeToContacts, addContact as saveContact, removeContact as deleteContact, subscribeToHiddenChats, hideChat as saveHiddenChat, unhideChat as restoreHiddenChat, subscribeToBlockedUsers, blockContact as saveBlockedContact, unblockContact as removeBlockedContact } from '../firebase/userService';
 import {
   subscribeToUserChats,
   subscribeToMessages,
@@ -29,6 +29,8 @@ export const useChat = () => useContext(ChatContext);
 export const ChatProvider = ({ children }) => {
   const { currentUser } = useAuth();
   const [contacts, setContacts] = useState([]);
+  const [registeredUsers, setRegisteredUsers] = useState([]);
+  const [hiddenChatIds, setHiddenChatIds] = useState([]);
   const [chats, setChats] = useState([]);
   const [activeContact, setActiveContact] = useState(null);
   const [activeChatId, setActiveChatId] = useState(null);
@@ -39,20 +41,25 @@ export const ChatProvider = ({ children }) => {
   const [loadingChats, setLoadingChats] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [permissionError, setPermissionError] = useState(null);
+  const [blockedUserIds, setBlockedUserIds] = useState([]);
 
-  // Subscribe to Contacts
+  // Subscribe only to explicitly saved Contacts.
   useEffect(() => {
-    if (!currentUser) return;
-    setLoadingContacts(true);
+    if (!currentUser) {
+      setContacts([]);
+      setLoadingContacts(false);
+      return;
+    }
 
-    const unsubscribe = subscribeToUsers(
+    setLoadingContacts(true);
+    const unsubscribe = subscribeToContacts(
       currentUser.uid,
-      (userList) => {
-        setContacts(userList);
+      (contactList) => {
+        setContacts(contactList);
         setLoadingContacts(false);
       },
       (error) => {
-        console.error("Firestore Permission Error (Contacts):", error);
+        console.error('Firestore Permission Error (Contacts):', error);
         setPermissionError(`Contacts read error: ${error.message}`);
         setLoadingContacts(false);
       }
@@ -61,32 +68,76 @@ export const ChatProvider = ({ children }) => {
     return unsubscribe;
   }, [currentUser]);
 
-  // Subscribe to User Chats (depends on currentUser & contacts)
+  // Subscribe to registered users for search.
   useEffect(() => {
-    if (!currentUser || contacts.length === 0) {
+    if (!currentUser) {
+      setRegisteredUsers([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToUsers(
+      currentUser.uid,
+      (userList) => setRegisteredUsers(userList),
+      (error) => console.error('Registered users read error:', error)
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+  // Subscribe to current user's personal block list
+  useEffect(() => {
+    if (!currentUser) {
+      setBlockedUserIds([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToBlockedUsers(
+      currentUser.uid,
+      (blockedUsers) => setBlockedUserIds(blockedUsers.map((item) => item.uid)),
+      (error) => console.error('Personal block list read error:', error)
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+  // Subscribe to this user's hidden conversations.
+  useEffect(() => {
+    if (!currentUser) {
+      setHiddenChatIds([]);
+      return;
+    }
+
+    const unsubscribe = subscribeToHiddenChats(
+      currentUser.uid,
+      (ids) => setHiddenChatIds(ids),
+      (error) => console.error('Hidden chats read error:', error)
+    );
+
+    return unsubscribe;
+  }, [currentUser]);
+
+  // Subscribe to chats independently of saved Contacts.
+  useEffect(() => {
+    if (!currentUser) {
       setChats([]);
       setLoadingChats(false);
       return;
     }
 
     setLoadingChats(true);
-
     const unsubscribe = subscribeToUserChats(
       currentUser.uid,
-      contacts,
       (chatList) => {
-        setChats(chatList);
+        setChats(chatList.filter((chat) => !hiddenChatIds.includes(chat.chatId)));
         setLoadingChats(false);
       },
       (error) => {
-        console.warn("Firestore Read Warning (Chats):", error);
+        console.warn('Firestore Read Warning (Chats):', error);
+        setPermissionError(`Chats read error: ${error.message}`);
         setLoadingChats(false);
       }
     );
 
     return unsubscribe;
-  }, [currentUser, contacts]);
-
+  }, [currentUser, hiddenChatIds]);
   // Subscribe to Messages for Active Chat
   useEffect(() => {
     if (!activeChatId) {
@@ -135,11 +186,33 @@ export const ChatProvider = ({ children }) => {
     return unsubscribe;
   }, [activeChatId, currentUser]);
 
+  const addContactToList = async (user) => {
+    if (!currentUser || !user?.uid) throw new Error('Select a registered user first');
+    await saveContact(currentUser.uid, user);
+  };
+
+  const removeContactFromList = async (userId) => {
+    if (!currentUser || !userId) throw new Error('Select a contact first');
+    await deleteContact(currentUser.uid, userId);
+  };
+
+  const hideConversation = async (chatId) => {
+    if (!currentUser || !chatId) throw new Error('Select a conversation first');
+    await saveHiddenChat(currentUser.uid, chatId);
+  };
+
+  const unhideConversation = async (chatId) => {
+    if (!currentUser || !chatId) return;
+    await restoreHiddenChat(currentUser.uid, chatId);
+  };
   const selectContact = (contact) => {
     setActiveContact(contact);
     setActiveReplyMessage(null);
     if (currentUser && contact) {
       const calculatedChatId = getChatId(currentUser.uid, contact.uid);
+      restoreHiddenChat(currentUser.uid, calculatedChatId).catch((error) =>
+        console.warn('Could not restore hidden conversation:', error)
+      );
       setActiveChatId(calculatedChatId);
     }
   };
@@ -147,9 +220,11 @@ export const ChatProvider = ({ children }) => {
   const selectChat = (chat, otherUser) => {
     setActiveContact(otherUser);
     setActiveReplyMessage(null);
+    restoreHiddenChat(currentUser.uid, chat.chatId).catch((error) =>
+      console.warn('Could not restore hidden conversation:', error)
+    );
     setActiveChatId(chat.chatId);
   };
-
   const setReplyMessage = (msg) => {
     if (!msg) {
       setActiveReplyMessage(null);
@@ -179,10 +254,30 @@ export const ChatProvider = ({ children }) => {
     }
   };
 
+  const isActiveContactBlocked = Boolean(
+    activeContact?.uid && blockedUserIds.includes(activeContact.uid)
+  );
+
+  const ensureContactNotBlocked = (targetUserId) => {
+    if (blockedUserIds.includes(targetUserId)) {
+      throw new Error('You have blocked this contact. Unblock them to send messages.');
+    }
+  };
+
+  const blockActiveContact = async () => {
+    if (!currentUser || !activeContact) throw new Error('No active contact selected');
+    await saveBlockedContact(currentUser.uid, activeContact);
+  };
+
+  const unblockActiveContact = async () => {
+    if (!currentUser || !activeContact) throw new Error('No active contact selected');
+    await removeBlockedContact(currentUser.uid, activeContact.uid);
+  };
   const sendMessage = async (text) => {
     if (!currentUser || !activeContact || !activeChatId) {
       throw new Error('Active contact or session missing');
     }
+    ensureContactNotBlocked(activeContact.uid);
     const idToken = await currentUser.getIdToken(false);
     const result = await sendTextMessage(
       activeChatId,
@@ -201,6 +296,7 @@ export const ChatProvider = ({ children }) => {
       throw new Error('Active contact or session missing');
     }
 
+    ensureContactNotBlocked(activeContact.uid);
     const imageUrl = await uploadImageToCloudinary(file, activeChatId, onProgress, onXhrCreated);
     const idToken = await currentUser.getIdToken(false);
 
@@ -222,6 +318,7 @@ export const ChatProvider = ({ children }) => {
       throw new Error('Active contact or session missing');
     }
 
+    ensureContactNotBlocked(activeContact.uid);
     const audioUrl = await uploadVoiceToCloudinary(audioBlob, activeChatId, onProgress, onXhrCreated);
     const idToken = await currentUser.getIdToken(false);
 
@@ -244,6 +341,7 @@ export const ChatProvider = ({ children }) => {
       throw new Error('Active contact or session missing');
     }
 
+    ensureContactNotBlocked(activeContact.uid);
     const fileUrl = await uploadDocumentToCloudinary(file, activeChatId, onProgress, onXhrCreated);
     const idToken = await currentUser.getIdToken(false);
 
@@ -284,13 +382,20 @@ export const ChatProvider = ({ children }) => {
     if (!currentUser || !sourceMessage || !targetContacts || targetContacts.length === 0) {
       throw new Error('Missing parameters for forwarding');
     }
+    const blockedTargets = targetContacts.filter((contact) => blockedUserIds.includes(contact.uid));
+    if (blockedTargets.length > 0) throw new Error('Cannot forward to a contact you have blocked. Unblock them first.');
     const idToken = await currentUser.getIdToken(false);
     return await forwardMessage(sourceMessage, targetContacts, currentUser.uid, idToken);
   };
 
   const value = {
     contacts,
+    registeredUsers,
     chats,
+    addContactToList,
+    removeContactFromList,
+    hideConversation,
+    unhideConversation,
     activeContact,
     activeChatId,
     messages,
@@ -312,8 +417,16 @@ export const ChatProvider = ({ children }) => {
     deleteForMe,
     deleteForEveryone,
     forwardMessageToContacts,
-    toggleAiAutoReply
+    toggleAiAutoReply,
+    blockedUserIds,
+    isActiveContactBlocked,
+    blockActiveContact,
+    unblockActiveContact
   };
 
   return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 };
+
+
+
+

@@ -1,34 +1,36 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useChat } from '../../context/ChatContext';
 import ChatList from './ChatList';
 import AdminPanel from '../admin/AdminPanel';
 import AiAssistantModal from '../ai/AiAssistantModal';
+import AccountPanel from './AccountPanel';
 import { MessageSquare, Users, Search, LogOut, User as UserIcon, Shield, Sparkles, X } from 'lucide-react';
 
 export default function Sidebar({ onCloseMobile }) {
-  const { currentUser, isAdmin, logout } = useAuth();
+  const { currentUser, userProfile, isAdmin, logout } = useAuth();
   const [tab, setTab] = useState('chats');
   const [searchQuery, setSearchQuery] = useState('');
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isAiAssistantOpen, setIsAiAssistantOpen] = useState(false);
+  const [isAccountPanelOpen, setIsAccountPanelOpen] = useState(false);
 
   return (
     <>
       <div className="w-full h-full bg-[#1E293B] border-r border-[#334155] flex flex-col shrink-0">
         {/* User Header matching Android Toolbar #4752C4 */}
         <div className="h-[60px] px-4 bg-[#4752C4] border-b border-[#334155] flex items-center justify-between shrink-0 shadow-md">
-          <div className="flex items-center gap-2.5 overflow-hidden">
+          <div className="flex items-center gap-2.5 overflow-hidden cursor-pointer" onClick={() => setIsAccountPanelOpen(true)} title="Edit Profile">
             <div className="w-10 h-10 rounded-full bg-white/10 border border-white flex items-center justify-center text-white shrink-0 font-bold overflow-hidden shadow-sm">
-              {currentUser?.photoURL ? (
-                <img src={currentUser.photoURL} alt="Profile" className="w-full h-full object-cover" />
+              {userProfile?.profileImageUrl || currentUser?.photoURL ? (
+                <img src={userProfile?.profileImageUrl || currentUser?.photoURL} alt="Profile" className="w-full h-full object-cover" />
               ) : (
                 currentUser?.displayName?.charAt(0)?.toUpperCase() || <UserIcon className="w-5 h-5" />
               )}
             </div>
             <div className="truncate">
               <h2 className="text-sm sm:text-base font-bold text-white truncate leading-tight">
-                {currentUser?.displayName || 'User'}
+                {userProfile?.displayName || currentUser?.displayName || 'User'}
               </h2>
               <p className="text-[11px] sm:text-[12px] text-white/80 truncate">Online</p>
             </div>
@@ -83,7 +85,7 @@ export default function Sidebar({ onCloseMobile }) {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search chats or contacts..."
+              placeholder={tab === 'chats' ? 'Search conversations...' : 'Search users by name or email...'}
               className="w-full bg-[#0F172A] border border-[#334155] rounded-full py-2 pl-9 pr-3 text-xs text-[#F8FAFC] placeholder-[#64748B] focus:outline-none focus:border-[#5865F2] transition"
             />
           </div>
@@ -121,6 +123,11 @@ export default function Sidebar({ onCloseMobile }) {
         </div>
       </div>
 
+      {/* Account Panel Modal Overlay */}
+      {isAccountPanelOpen && (
+        <AccountPanel onClose={() => setIsAccountPanelOpen(false)} />
+      )}
+
       {/* AI Assistant Modal Overlay */}
       {isAiAssistantOpen && (
         <AiAssistantModal onClose={() => setIsAiAssistantOpen(false)} />
@@ -133,3 +140,6 @@ export default function Sidebar({ onCloseMobile }) {
     </>
   );
 }
+
+
+

@@ -1,7 +1,8 @@
-import React, { useRef, useEffect } from 'react';
+﻿import React, { useRef, useEffect, useState } from 'react';
 import { useChat } from '../../context/ChatContext';
 import MessageItem from './MessageItem';
 import MessageInput from './MessageInput';
+import ContactProfilePanel from './ContactProfilePanel';
 import { MessageSquare, Shield, Loader2, AlertTriangle, ArrowLeft, Menu, Bot, Sparkles } from 'lucide-react';
 
 export default function ChatWindow({ onOpenMobileSidebar }) {
@@ -12,8 +13,13 @@ export default function ChatWindow({ onOpenMobileSidebar }) {
     permissionError,
     selectContact,
     aiSettings,
-    toggleAiAutoReply
+    toggleAiAutoReply,
+    isActiveContactBlocked,
+    blockActiveContact,
+    unblockActiveContact
   } = useChat();
+
+  const [isContactProfileOpen, setIsContactProfileOpen] = useState(false);
 
   const messagesEndRef = useRef(null);
   const messageContainerRef = useRef(null);
@@ -96,23 +102,30 @@ export default function ChatWindow({ onOpenMobileSidebar }) {
             </button>
           )}
 
-          <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/10 border border-white flex items-center justify-center text-white font-bold overflow-hidden relative shadow-sm shrink-0">
-            {activeContact.profileImageUrl ? (
-              <img src={activeContact.profileImageUrl} alt="Avatar" className="w-full h-full object-cover" />
-            ) : (
-              activeContact.displayName?.charAt(0)?.toUpperCase() || 'U'
-            )}
-            {activeContact.status === 'Online' && (
-              <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#22C55E] border-2 border-[#1E293B] absolute bottom-0 right-0 shadow-sm"></span>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setIsContactProfileOpen(true)}
+            className="flex items-center gap-2 sm:gap-3 min-w-0 text-left rounded-xl hover:bg-white/10 p-1.5 -ml-1.5 transition cursor-pointer"
+            title="View contact profile"
+          >
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-white/10 border border-white flex items-center justify-center text-white font-bold overflow-hidden relative shadow-sm shrink-0">
+              {activeContact.profileImageUrl || activeContact.photoURL ? (
+                <img src={activeContact.profileImageUrl || activeContact.photoURL} alt="Avatar" className="w-full h-full object-cover" />
+              ) : (
+                activeContact.displayName?.charAt(0)?.toUpperCase() || 'U'
+              )}
+              {activeContact.status === 'Online' && (
+                <span className="w-2.5 h-2.5 sm:w-3 sm:h-3 rounded-full bg-[#22C55E] border-2 border-[#1E293B] absolute bottom-0 right-0 shadow-sm"></span>
+              )}
+            </div>
 
-          <div className="min-w-0">
-            <h2 className="text-sm sm:text-base font-bold text-white leading-tight truncate max-w-[110px] xs:max-w-[160px] sm:max-w-xs">
-              {activeContact.displayName || 'User'}
-            </h2>
-            <p className="text-[11px] sm:text-[12px] text-white/80 truncate">{activeContact.status || 'Offline'}</p>
-          </div>
+            <div className="min-w-0">
+              <h2 className="text-sm sm:text-base font-bold text-white leading-tight truncate max-w-[110px] xs:max-w-[160px] sm:max-w-xs">
+                {activeContact.displayName || 'User'}
+              </h2>
+              <p className="text-[11px] sm:text-[12px] text-white/80 truncate">{activeContact.status || 'Offline'}</p>
+            </div>
+          </button>
         </div>
 
         {/* Right Side: AI Auto-Reply Toggle & Clear Status Badge */}
@@ -149,6 +162,17 @@ export default function ChatWindow({ onOpenMobileSidebar }) {
         </div>
       </div>
 
+      {isContactProfileOpen && (
+        <ContactProfilePanel
+          contact={activeContact}
+          messages={messages}
+          isBlocked={isActiveContactBlocked}
+          onBlock={blockActiveContact}
+          onUnblock={unblockActiveContact}
+          onClose={() => setIsContactProfileOpen(false)}
+        />
+      )}
+
       {/* Messages Feed on Pure White #FFFFFF */}
       <div
         ref={messageContainerRef}
@@ -179,3 +203,6 @@ export default function ChatWindow({ onOpenMobileSidebar }) {
     </div>
   );
 }
+
+
+

@@ -1,7 +1,8 @@
-import {
+﻿import {
   collection,
   doc,
   query,
+  where,
   orderBy,
   onSnapshot,
   writeBatch,
@@ -58,49 +59,59 @@ export const subscribeToAiSettings = (chatId, userId, callback, onError) => {
   );
 };
 
-export const subscribeToUserChats = (currentUserId, contacts, callback, onError) => {
-  if (!currentUserId || !contacts || contacts.length === 0) {
+export const subscribeToUserChats = (currentUserId, callback, onError) => {
+  if (!currentUserId) {
     callback([]);
     return () => {};
   }
 
-  let chatsMap = new Map();
-  let unsubscribes = [];
+  const chatsRef = collection(db, 'chats');
+  const chatsMap = new Map();
+  let active = true;
 
-  contacts.forEach((contact) => {
-    if (!contact.uid) return;
-    const chatId = getChatId(currentUserId, contact.uid);
-    const chatDocRef = doc(db, 'chats', chatId);
+  const emitChats = () => {
+    if (!active) return;
 
-    const unsub = onSnapshot(
-      chatDocRef,
-      (docSnap) => {
-        if (docSnap.exists()) {
-          const data = docSnap.data();
-          chatsMap.set(chatId, { chatId, ...data });
-        } else {
-          chatsMap.delete(chatId);
-        }
-
-        const sortedChats = Array.from(chatsMap.values()).sort(
-          (a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0)
-        );
-        callback(sortedChats);
-      },
-      (error) => {
-        console.warn(`Firestore read error for chat ${chatId}:`, error.message);
-        if (onError) onError(error);
-      }
+    const sortedChats = Array.from(chatsMap.values()).sort(
+      (a, b) => (b.lastMessageTimestamp || 0) - (a.lastMessageTimestamp || 0)
     );
 
-    unsubscribes.push(unsub);
+    callback(sortedChats);
+  };
+
+  const handleSnapshot = (snapshot) => {
+    snapshot.docChanges().forEach((change) => {
+      if (change.type === 'removed') {
+        chatsMap.delete(change.doc.id);
+      } else {
+        chatsMap.set(change.doc.id, {
+          chatId: change.doc.id,
+          ...change.doc.data()
+        });
+      }
+    });
+
+    emitChats();
+  };
+
+  const q1 = query(chatsRef, where('user1Id', '==', currentUserId));
+  const q2 = query(chatsRef, where('user2Id', '==', currentUserId));
+
+  const unsubscribe1 = onSnapshot(q1, handleSnapshot, (error) => {
+    if (onError) onError(error);
+  });
+
+  const unsubscribe2 = onSnapshot(q2, handleSnapshot, (error) => {
+    if (onError) onError(error);
   });
 
   return () => {
-    unsubscribes.forEach((unsub) => unsub());
+    active = false;
+    unsubscribe1();
+    unsubscribe2();
+    chatsMap.clear();
   };
 };
-
 export const subscribeToMessages = (chatId, callback, onError) => {
   if (!chatId) return () => {};
 
@@ -233,7 +244,7 @@ export const sendImageMessage = async (chatId, currentUserId, recipientId, image
   if (replyMessage) {
     messageData.replyMessageId = replyMessage.messageId || '';
     messageData.replySenderName = replyMessage.senderId === currentUserId ? 'You' : (replyMessage.senderName || 'Sender');
-    messageData.replyMessage = replyMessage.text || (replyMessage.type === 'image' ? '🖼️ Photo' : 'Message');
+    messageData.replyMessage = replyMessage.text || (replyMessage.type === 'image' ? 'ðŸ–¼ï¸ Photo' : 'Message');
     messageData.replyType = replyMessage.type || 'text';
   }
 
@@ -247,7 +258,7 @@ export const sendImageMessage = async (chatId, currentUserId, recipientId, image
     chatId,
     user1Id,
     user2Id,
-    lastMessage: '📷 Photo',
+    lastMessage: 'ðŸ“· Photo',
     lastMessageTimestamp: timestamp,
     lastSenderId: currentUserId,
     lastMessageSenderId: currentUserId
@@ -307,7 +318,7 @@ export const sendVoiceMessage = async (chatId, currentUserId, recipientId, audio
   if (replyMessage) {
     messageData.replyMessageId = replyMessage.messageId || '';
     messageData.replySenderName = replyMessage.senderId === currentUserId ? 'You' : (replyMessage.senderName || 'Sender');
-    messageData.replyMessage = replyMessage.text || (replyMessage.type === 'voice' ? '🎤 Voice message' : 'Message');
+    messageData.replyMessage = replyMessage.text || (replyMessage.type === 'voice' ? 'ðŸŽ¤ Voice message' : 'Message');
     messageData.replyType = replyMessage.type || 'text';
   }
 
@@ -321,7 +332,7 @@ export const sendVoiceMessage = async (chatId, currentUserId, recipientId, audio
     chatId,
     user1Id,
     user2Id,
-    lastMessage: '🎤 Voice message',
+    lastMessage: 'ðŸŽ¤ Voice message',
     lastMessageTimestamp: timestamp,
     lastSenderId: currentUserId,
     lastMessageSenderId: currentUserId
@@ -395,7 +406,7 @@ export const sendDocumentMessage = async (
   if (replyMessage) {
     messageData.replyMessageId = replyMessage.messageId || '';
     messageData.replySenderName = replyMessage.senderId === currentUserId ? 'You' : (replyMessage.senderName || 'Sender');
-    messageData.replyMessage = replyMessage.fileName ? `📄 ${replyMessage.fileName}` : (replyMessage.text || 'Document');
+    messageData.replyMessage = replyMessage.fileName ? `ðŸ“„ ${replyMessage.fileName}` : (replyMessage.text || 'Document');
     messageData.replyType = replyMessage.type || 'text';
   }
 
@@ -409,7 +420,7 @@ export const sendDocumentMessage = async (
     chatId,
     user1Id,
     user2Id,
-    lastMessage: `📄 ${fileName}`,
+    lastMessage: `ðŸ“„ ${fileName}`,
     lastMessageTimestamp: timestamp,
     lastSenderId: currentUserId,
     lastMessageSenderId: currentUserId
@@ -463,11 +474,11 @@ export const deleteMessageForEveryone = async (chatId, messageId, currentUserId,
 
   let textPlaceholder = 'This message was deleted.';
   if (message.type === 'image') {
-    textPlaceholder = '🖼️ This image was deleted.';
+    textPlaceholder = 'ðŸ–¼ï¸ This image was deleted.';
   } else if (message.type === 'voice') {
-    textPlaceholder = '🎤 This voice message was deleted.';
+    textPlaceholder = 'ðŸŽ¤ This voice message was deleted.';
   } else if (message.type === 'document') {
-    textPlaceholder = '📄 This document was deleted.';
+    textPlaceholder = 'ðŸ“„ This document was deleted.';
   }
 
   const messageRef = doc(db, 'chats', chatId, 'messages', messageId);
@@ -525,9 +536,9 @@ export const forwardMessage = async (sourceMessage, targetContacts, currentUserI
 
     let lastMsgSummary = 'Forwarded message';
     if (sourceMessage.type === 'text') lastMsgSummary = sourceMessage.text;
-    else if (sourceMessage.type === 'image') lastMsgSummary = '📷 Photo';
-    else if (sourceMessage.type === 'voice') lastMsgSummary = '🎤 Voice message';
-    else if (sourceMessage.type === 'document') lastMsgSummary = `📄 ${sourceMessage.fileName || 'Document'}`;
+    else if (sourceMessage.type === 'image') lastMsgSummary = 'ðŸ“· Photo';
+    else if (sourceMessage.type === 'voice') lastMsgSummary = 'ðŸŽ¤ Voice message';
+    else if (sourceMessage.type === 'document') lastMsgSummary = `ðŸ“„ ${sourceMessage.fileName || 'Document'}`;
 
     const user1Id = currentUserId < targetUserId ? currentUserId : targetUserId;
     const user2Id = currentUserId < targetUserId ? targetUserId : currentUserId;
@@ -573,3 +584,5 @@ export const forwardMessage = async (sourceMessage, targetContacts, currentUserI
 
   return results;
 };
+
+
